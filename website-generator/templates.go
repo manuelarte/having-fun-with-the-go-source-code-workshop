@@ -125,7 +125,35 @@ a:hover {
 
 .lang-switch {
     border-left: 1px solid rgba(255, 255, 255, 0.3);
-    padding-left: 1.5rem !important;
+    padding-left: 1.5rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: white;
+    cursor: pointer;
+}
+
+.lang-switch select {
+    appearance: auto;
+    background: rgba(255, 255, 255, 0.12);
+    color: white;
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 6px;
+    padding: 0.25rem 0.5rem;
+    font: inherit;
+    font-size: 0.95rem;
+    cursor: pointer;
+}
+
+.lang-switch select:hover,
+.lang-switch select:focus {
+    background: rgba(255, 255, 255, 0.2);
+    outline: none;
+}
+
+.lang-switch select option {
+    color: #111;
+    background: #fff;
 }
 
 /* Hero Section */

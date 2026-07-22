@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>练习 3: 多个 &#34;go&#34; 关键字 —— Parser 增强 - Go Source Code Workshop</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            hljs.highlightAll();
+
+            
+            document.querySelectorAll('pre').forEach(function(pre) {
+                const button = document.createElement('button');
+                button.className = 'copy-button';
+                button.innerHTML = '<i class="far fa-copy"></i>';
+                button.title = 'Copy to clipboard';
+
+                button.addEventListener('click', function() {
+                    const code = pre.querySelector('code');
+                    const text = code.textContent;
+
+                    navigator.clipboard.writeText(text).then(function() {
+                        button.innerHTML = '<i class="fas fa-check"></i>';
+                        button.classList.add('copied');
+                        setTimeout(function() {
+                            button.innerHTML = '<i class="far fa-copy"></i>';
+                            button.classList.remove('copied');
+                        }, 2000);
+                    }).catch(function(err) {
+                        console.error('Failed to copy:', err);
+                    });
+                });
+
+                pre.appendChild(button);
+            });
+        });
+    </script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <a href="index.html" class="nav-home">Having fun with the Go Source Code</a>
+            <div class="nav-links">
+                <a href="index.html">首页</a>
+                <label class="lang-switch">
+                    <i class="fas fa-globe" aria-hidden="true"></i>
+                    <select onchange="if (this.value) location.href = this.value" aria-label="Language">
+                        <option value="../03-parser-multiple-go.html">English</option><option value="../es/03-parser-multiple-go.html">Español</option><option value="" selected>中文</option>
+                    </select>
+                </label>
+                <a href="https://github.com/jespino/having-fun-with-the-go-source-code-workshop" target="_blank"><i class="fab fa-github"></i> Repository</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <article class="exercise-content">
+            <h1>练习 3: 多个 &ldquo;go&rdquo; 关键字 — 增强 Parser</h1>
+
+<blockquote>
+<p>📖 <strong>想深入了解？</strong> 阅读 Internals for Interns 上的 <a href="https://internals-for-interns.com/posts/the-go-parser/">The Parser</a>，深入理解 Go 的 parser 如何构建 Abstract Syntax Tree。</p>
+</blockquote>
+
+<p>在本练习中，你将修改 Go 的 parser，让它接受连续多个 &ldquo;go&rdquo; 关键字来启动 goroutine！这会教你如何扩展 parser 逻辑，以处理重复出现的语法模式，同时保持语义行为不变。</p>
+
+<h2>学习目标</h2>
+
+<p>完成本练习后，你将能够：</p>
+
+<ul>
+<li>理解 Go parser 的结构以及 token 是如何被消费的</li>
+<li>知道如何修改 parser 逻辑来扩展语法</li>
+<li>用可运行的代码验证 parser 的改动</li>
+</ul>
+
+<h2>简介：什么是 Parser？</h2>
+
+<p>Parser 是编译器的第二阶段，紧跟在 scanner 之后。Scanner 产出的是一串扁平的 token 流，而 parser 的工作是给这串 token <strong>结构化</strong>——构建一棵 <strong>Abstract Syntax Tree（AST）</strong>，用树形结构表达代码中的层次关系。</p>
+
+<p>例如，一条 <code>go sayHello()</code> 语句会变成一个类型为 <code>CallStmt</code> 的树节点，其中 <code>Tok: _Go</code>，子节点则表示函数调用 <code>sayHello()</code>。Parser 知道：在看到 <code>go</code> token 之后，后面必须跟一个函数调用表达式——这就是语言的文法规则。</p>
+
+<p>Go 的 parser 使用一种叫 <strong>recursive descent（递归下降）</strong> 的技术：每条文法规则（文件、声明、语句、表达式）对应一个函数，这些函数自上而下互相调用。入口 <code>fileOrNil()</code> 先解析 package 子句，再解析 import，最后是声明。每个声明里可以有语句，每个语句里可以有表达式。</p>
+
+<p>Parser 通过 <code>p.next()</code> 逐个消费 token，用 <code>p.tok</code> 检查当前 token。Parser 源码位于 <code>go/src/cmd/compile/internal/syntax/parser.go</code>。</p>
+
+<h2>第 1 步：定位到 Parser</h2>
+
+<pre><code class="language-bash">cd go/src/cmd/compile/internal/syntax
+</code></pre>
+
+<h3>理解当前的 Parser 逻辑</h3>
+
+<p>我们先看看 parser 目前如何处理 &ldquo;go&rdquo; 语句。打开 <code>parser.go</code>，大约在第 2675 行：</p>
+
+<pre><code class="language-go">// go/src/cmd/compile/internal/syntax/parser.go:2673-2676
+...
+return s
+
+case _Go, _Defer:
+    return p.callStmt()
+...
+</code></pre>
+
+<p>Parser 识别到 <code>_Go</code> token 后，会立刻调用 <code>p.callStmt()</code> 来处理 goroutine 的创建。</p>
+
+<p>在 <code>parser.go</code> 第 977 行附近找到 <code>callStmt()</code> 方法。这里就是我们要加入「多个 go」逻辑的地方：</p>
+
+<pre><code class="language-go">// go/src/cmd/compile/internal/syntax/parser.go:976-985
+// callStmt parses call-like statements that can be preceded by 'defer' and 'go'.
+func (p *parser) callStmt() *CallStmt {
+    if trace {
+        defer p.trace(&quot;callStmt&quot;)()
+    }
+
+    s := new(CallStmt)
+    s.pos = p.pos()
+    s.Tok = p.tok // _Defer or _Go
+    p.next()
+    ...
+}
+</code></pre>
+
+<p>关键两行是：<code>s.Tok = p.tok</code> 记录这是 &ldquo;defer&rdquo; 还是 &ldquo;go&rdquo; 语句，随后 <code>p.next()</code> 消费掉当前 token。</p>
+
+<h2>第 2 步：支持多个 &ldquo;go&rdquo;</h2>
+
+<p>我们需要修改 <code>callStmt()</code>：在保持语义不变的前提下，消费掉连续出现的多个 &ldquo;go&rdquo; token。</p>
+
+<p><strong>编辑 <code>parser.go</code>：</strong></p>
+
+<p>找到大约第 985 行调用 <code>p.next()</code> 的位置，在其后加入支持多个 &ldquo;go&rdquo; 的逻辑：</p>
+
+<pre><code class="language-go">// go/src/cmd/compile/internal/syntax/parser.go:982-990
+s := new(CallStmt)
+s.pos = p.pos()
+s.Tok = p.tok // _Defer or _Go
+p.next()
+
+// Allow multiple consecutive &quot;go&quot; keywords (go go go ...)
+if s.Tok == _Go {
+    for p.tok == _Go {
+        p.next()
+    }
+}
+
+...
+</code></pre>
+
+<h3>理解这段改动</h3>
+
+<ul>
+<li><strong><code>if s.Tok == _Go</code></strong>：只对 &ldquo;go&rdquo; 语句生效（不影响 &ldquo;defer&rdquo;）</li>
+<li><strong><code>for p.tok == _Go</code></strong>：只要后面还是连续的 &ldquo;go&rdquo; token，就一直消费</li>
+<li><strong><code>p.next()</code></strong>：跳过每一个额外的 &ldquo;go&rdquo; token</li>
+<li><strong>语义保持</strong>：<code>s.Tok</code> 始终是 <code>_Go</code>，所以语义含义不变</li>
+</ul>
+
+<h2>第 3 步：重新编译编译器</h2>
+
+<p>用我们的改动重新构建 Go toolchain：</p>
+
+<pre><code class="language-bash">cd ../../../  # back to go/src
+./make.bash
+</code></pre>
+
+<p>如果出现编译错误，检查并修正你的改动。</p>
+
+<h2>第 4 步：测试多个 &ldquo;go&rdquo; 关键字</h2>
+
+<p>写一个测试程序，验证多个 &ldquo;go&rdquo; 的语法是否生效：</p>
+
+<pre><code class="language-bash">mkdir -p /tmp/multiple-go-test
+cd /tmp/multiple-go-test
+</code></pre>
+
+<p>创建 test.go 文件：</p>
+
+<pre><code class="language-go">package main
+
+import (
+    &quot;fmt&quot;
+    &quot;time&quot;
+)
+
+func sayHello(name string) {
+    fmt.Printf(&quot;Hello from %s!\n&quot;, name)
+}
+
+func main() {
+    fmt.Println(&quot;Testing multiple go keywords...&quot;)
+
+    // Test regular single go
+    go sayHello(&quot;single go&quot;)
+
+    // Test double go
+    go go sayHello(&quot;double go&quot;)
+
+    // Test triple go
+    go go go sayHello(&quot;triple go&quot;)
+
+    // Test quadruple go
+    go go go go sayHello(&quot;quadruple go&quot;)
+
+    // Wait a bit to see output
+    time.Sleep(100 * time.Millisecond)
+    fmt.Println(&quot;All done!&quot;)
+}
+</code></pre>
+
+<p>用你定制的 Go 运行测试程序：</p>
+
+<pre><code class="language-bash">/path/to/workshop/go/bin/go run test.go
+</code></pre>
+
+<p>你应该会看到类似这样的输出：</p>
+
+<pre><code>Testing multiple go keywords...
+Hello from single go!
+Hello from double go!
+Hello from triple go!
+Hello from quadruple go!
+All done!
+</code></pre>
+
+<h2>第 5 步：跑 Parser 测试</h2>
+
+<p>确认我们没有把 parser 搞坏：</p>
+
+<pre><code class="language-bash">cd /path/to/workshop/go/src
+../bin/go test cmd/compile/internal/syntax -short
+</code></pre>
+
+<h2>我们做了什么</h2>
+
+<ol>
+<li><strong>增强 Parser</strong>：修改 <code>callStmt()</code>，让它能处理连续多个 &ldquo;go&rdquo; token</li>
+<li><strong>消费 Token</strong>：在第一个 &ldquo;go&rdquo; 之后用循环继续消费后续的 &ldquo;go&rdquo;</li>
+<li><strong>保持语义</strong>：多个 &ldquo;go&rdquo; 关键字仍然只创建<strong>一个</strong> goroutine</li>
+<li><strong>改动精准</strong>：只影响 &ldquo;go&rdquo; 语句，不影响 &ldquo;defer&rdquo;</li>
+</ol>
+
+<h2>你学到了什么</h2>
+
+<ul>
+<li><strong>Parser 逻辑</strong>：Go 如何把 token 序列处理成语句</li>
+<li><strong>Token 消费</strong>：如何连续消费同一类型的多个 token</li>
+<li><strong>Parser 测试</strong>：用多样化的用例验证 parser 改动</li>
+</ul>
+
+<h2>扩展思路</h2>
+
+<p>可以试试这些额外改动：</p>
+
+<ol>
+<li>给 &ldquo;defer defer defer&rdquo; 加类似支持（更有挑战！）</li>
+<li>加一个上限（例如最多连续 5 个 &ldquo;go&rdquo;）</li>
+<li>记录实际用了多少个 &ldquo;go&rdquo; 关键字，方便调试</li>
+<li>让多个关键字影响 goroutine 的优先级</li>
+</ol>
+
+<h2>下一步</h2>
+
+<p>你已经成功扩展了 Go 的 parser，让它能处理重复的语法模式。</p>
+
+<p>在 <a href="04-compiler-inlining-parameters.html">练习 4: 编译器 Inlining 参数</a> 中，我们会转向探索 Go 编译器的优化机制，学习如何调节 inlining 参数来控制 binary 体积。</p>
+
+<h2>清理</h2>
+
+<p>恢复原始的 Go 源码：</p>
+
+<pre><code class="language-bash">cd /path/to/workshop/go/src/cmd/compile/internal/syntax
+git checkout parser.go
+cd ../../../
+./make.bash  # Rebuild with original code
+</code></pre>
+
+<h2>总结</h2>
+
+<p>现在可以用多个 &ldquo;go&rdquo; 关键字启动 goroutine 了：</p>
+
+<pre><code class="language-go">// These are all equivalent and create exactly one goroutine:
+go myFunction()
+go go myFunction()
+go go go myFunction() 
+go go go go myFunction()
+
+// The parser consumes all consecutive &quot;go&quot; tokens
+// but the semantic behavior remains the same!
+</code></pre>
+
+<p>本练习展示了：在 parser 层面做改动，可以在不改变底层语言语义的前提下，加入富有表现力的语法糖。</p>
+
+<hr />
+
+<p><em>继续 <a href="04-compiler-inlining-parameters.html">练习 4</a>，或返回 <a href="index.html">工作坊主页</a></em></p>
+
+        </article>
+
+        <nav class="exercise-nav">
+            
+            <a href="02-scanner-arrow-operator.html" class="nav-button">← 上一篇</a>
+            
+            
+            <a href="04-compiler-inlining-parameters.html" class="nav-button">下一篇: 练习 4 →</a>
+            
+        </nav>
+    </div>
+
+    <footer>
+        <div class="container">
+            <p>Having fun with the Go Source Code</p>
+            <p>作者 <strong>Jesús Espino</strong></p>
+            <div class="footer-links">
+                <a href="https://github.com/jespino" target="_blank"><i class="fab fa-github"></i> GitHub</a>
+                <a href="https://x.com/jespinog" target="_blank"><i class="fab fa-x-twitter"></i> @jespinog</a>
+                <a href="https://linkedin.com/in/jesus-espino" target="_blank"><i class="fab fa-linkedin"></i> LinkedIn</a>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

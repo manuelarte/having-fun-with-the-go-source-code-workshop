@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>玩转 Go 源码</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            hljs.highlightAll();
+
+            
+            document.querySelectorAll('pre').forEach(function(pre) {
+                const button = document.createElement('button');
+                button.className = 'copy-button';
+                button.innerHTML = '<i class="far fa-copy"></i>';
+                button.title = 'Copy to clipboard';
+
+                button.addEventListener('click', function() {
+                    const code = pre.querySelector('code');
+                    const text = code.textContent;
+
+                    navigator.clipboard.writeText(text).then(function() {
+                        button.innerHTML = '<i class="fas fa-check"></i>';
+                        button.classList.add('copied');
+                        setTimeout(function() {
+                            button.innerHTML = '<i class="far fa-copy"></i>';
+                            button.classList.remove('copied');
+                        }, 2000);
+                    }).catch(function(err) {
+                        console.error('Failed to copy:', err);
+                    });
+                });
+
+                pre.appendChild(button);
+            });
+        });
+    </script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <a href="index.html" class="nav-home">Having fun with the Go Source Code</a>
+            <div class="nav-links">
+                <a href="index.html">首页</a>
+                <label class="lang-switch">
+                    <i class="fas fa-globe" aria-hidden="true"></i>
+                    <select onchange="if (this.value) location.href = this.value" aria-label="Language">
+                        <option value="../index.html">English</option><option value="../es/index.html">Español</option><option value="" selected>中文</option>
+                    </select>
+                </label>
+                <a href="https://github.com/jespino/having-fun-with-the-go-source-code-workshop" target="_blank"><i class="fab fa-github"></i> Repository</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <header class="hero">
+            <h1>玩转 Go 源码</h1>
+            <p class="lead">欢迎来到动手型工作坊：你将学习如何阅读、构建并改造 Go 语言的源码。我们会带你走进编译器与 runtime，动手改一改，真正搞懂它们如何工作。</p>
+            <p class="version-note"><strong>本工作坊使用 Go 1.26.1</strong> —— 我们会 checkout 指定 release tag，保证所有练习环境一致。</p>
+        </header>
+
+        <section class="prerequisites">
+            <h2>前置要求</h2>
+            <ul>
+                <li>具备 Go 编程基础</li>
+                <li>熟悉命令行工具</li>
+                <li>系统已安装 Git</li>
+                <li><strong>Go 编译器 1.24 或更高版本</strong>（bootstrap 构建过程需要）</li>
+                <li>至少 4GB 可用磁盘空间</li>
+                
+            </ul>
+        </section>
+
+        <section class="overview">
+            <h2>工作坊概览</h2>
+            <p>本工作坊共 12 个练习：从源码编译 Go 开始，再到编译器、工具链与 runtime 的各处改造。你会接触 lexer、parser，以及 runtime 行为等 Go 内部机制：</p>
+
+            <div class="exercises-grid">
+                
+                <a href="00-introduction-setup.html" class="exercise-card-link">
+                    <div class="exercise-card">
+                        <div class="exercise-number">练习 0</div>
+                        <h3>简介与环境搭建</h3>
+                        <p>克隆并搭建 Go 源码环境，迈出第一步。</p>
+                    </div>
+                </a>
+                
+                <a href="01-compile-go-unchanged.html" class="exercise-card-link">
+                    <div class="exercise-card">
+                        <div class="exercise-number">练习 1</div>
+                        <h3>原样编译 Go</h3>
+                        <p>在不做任何修改的情况下，从源码构建 Go toolchain。</p>
+                    </div>
+                </a>
+                
+                <a href="02-scanner-arrow-operator.html" class="exercise-card-link">
+                    <div class="exercise-card">
+                        <div class="exercise-number">练习 2</div>
+                        <h3>为 Goroutine 增加 &#34;=&gt;&#34; 箭头运算符</h3>
+                        <p>通过添加 &#34;=&gt;&#34; 作为启动 goroutine 的替代语法，学习修改 scanner/lexer。</p>
+                    </div>
+                </a>
+                
+                <a href="03-parser-multiple-go.html" class="exercise-card-link">
+                    <div class="exercise-card">
+                        <div class="exercise-number">练习 3</div>
+                        <h3>多个 &#34;go&#34; 关键字 —— Parser 增强</h3>
+                        <p>允许连续多个 &#34;go&#34; 关键字（go go go myFunction），学习修改 parser。</p>
+                    </div>
+                </a>
+                
+                <a href="04-compiler-inlining-parameters.html" class="exercise-card-link">
+                    <div class="exercise-card">
+                        <div class="exercise-number">练习 4</div>
+                        <h3>Inline 参数 —— 函数内联实验</h3>
+                        <p>通过调整函数 inlining 参数，观察 inliner 的行为。</p>
+                    </div>
+                </a>
+                
+                <a href="05-gofmt-ast-transformation.html" class="exercise-card-link">
+                    <div class="exercise-card">
+                        <div class="exercise-number">练习 5</div>
+                        <h3>改造 gofmt —— 缩进与 AST 变换</h3>
+                        <p>让 gofmt 使用 4 空格代替 tab，并加入把 &#34;hello&#34; 替换为 &#34;helo&#34; 的自定义 AST 变换。</p>
+                    </div>
+                </a>
+                
+                <a href="06-ssa-power-of-two-detector.html" class="exercise-card-link">
+                    <div class="exercise-card">
+                        <div class="exercise-number">练习 6</div>
+                        <h3>SSA Pass —— 检测除以 2 的幂</h3>
+                        <p>编写自定义 SSA compiler pass，识别可优化为位移的「除以 2 的幂」运算。</p>
+                    </div>
+                </a>
+                
+                <a href="07-runtime-patient-go.html" class="exercise-card-link">
+                    <div class="exercise-card">
+                        <div class="exercise-number">练习 7</div>
+                        <h3>有耐心的 Go —— 等待所有 Goroutine</h3>
+                        <p>修改 Go runtime，在程序退出前等待所有 goroutine 结束。</p>
+                    </div>
+                </a>
+                
+                <a href="08-goroutine-sleep-detective.html" class="exercise-card-link">
+                    <div class="exercise-card">
+                        <div class="exercise-number">练习 8</div>
+                        <h3>Goroutine 睡眠侦探 —— Runtime 状态监控</h3>
+                        <p>在 Go scheduler 中加入日志，观察 goroutine 进入睡眠。</p>
+                    </div>
+                </a>
+                
+                <a href="09-predictable-select.html" class="exercise-card-link">
+                    <div class="exercise-card">
+                        <div class="exercise-number">练习 9</div>
+                        <h3>可预测的 Select —— 去掉随机性</h3>
+                        <p>修改 select 实现，从随机变为确定性选择。</p>
+                    </div>
+                </a>
+                
+                <a href="10-java-style-stack-traces.html" class="exercise-card-link">
+                    <div class="exercise-card">
+                        <div class="exercise-number">练习 10</div>
+                        <h3>Java 风格 Stack Trace —— 让 Panic 更眼熟</h3>
+                        <p>把 Go 冗长的 stack trace 改成 Java 风格格式。</p>
+                    </div>
+                </a>
+                
+                <a href="11-dnd-work-stealing.html" class="exercise-card-link">
+                    <div class="exercise-card">
+                        <div class="exercise-number">练习 11</div>
+                        <h3>D&amp;D Work Stealing —— 掷骰抢 Goroutine</h3>
+                        <p>在 scheduler 的 work stealing 中加入 d20 掷骰：P 必须掷出大于 10 才能偷走 goroutine。</p>
+                    </div>
+                </a>
+                
+            </div>
+        </section>
+
+        <section class="getting-started">
+            <h2>开始上手</h2>
+            <ol>
+                <li>从 <a href="00-introduction-setup.html">练习 0</a> 开始搭建环境</li>
+                <li>建议按顺序完成练习</li>
+                <li>完成练习 1 之后，可以按兴趣挑选后续练习。</li>
+                
+            </ol>
+        </section>
+
+        <section class="tips">
+            <h2>实用建议</h2>
+            <ul>
+                <li>每个练习都慢慢做 —— 编译器内部并不简单！</li>
+                <li>不要只盯着题目要求，多逛逛 Go 源码</li>
+                <li>用 <code>git</code> 记录改动，搞砸了随时回退</li>
+                <li>用各种 Go 小程序充分验证你的修改</li>
+                
+            </ul>
+        </section>
+
+        <section class="resources">
+            <h2>参考资源</h2>
+            <ul>
+                <li><a href="https://github.com/golang/go/tree/master/src/cmd/compile">Go Compiler Overview</a></li>
+                <li><a href="https://go.dev/ref/spec">Go Language Specification</a></li>
+                <li><a href="https://pkg.go.dev/runtime">Go Runtime Documentation</a></li>
+            </ul>
+
+            <h3>视频参考</h3>
+            <p>这些练习的思路来自我的分享：</p>
+            <div class="video-grid">
+                <div class="video-container">
+                    <h4>Understanding the Go Compiler</h4>
+                    <iframe src="https://www.youtube.com/embed/qnmoAA0WRgE" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+                    <p>深入 Go 的编译过程</p>
+                </div>
+                <div class="video-container">
+                    <h4>Understanding the Go Runtime</h4>
+                    <iframe src="https://www.youtube.com/embed/YpRNFNFaLGY" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+                    <p>探索 Go 的 runtime 系统</p>
+                </div>
+            </div>
+        </section>
+
+        <section class="completion">
+            <h2>完成工作坊之后</h2>
+            <p>做完所有练习，你将：</p>
+            <ul>
+                <li><strong>从源码构建过 Go</strong>，并理解 bootstrap 流程</li>
+                <li><strong>改过语言语法</strong>，通过调整 scanner 与 parser 行为</li>
+                <li><strong>定制过开发工具</strong>，例如 gofmt 与编译器优化参数</li>
+                <li><strong>实现过 SSA 优化</strong>，动手改 compiler backend</li>
+                <li><strong>改过 runtime 行为</strong>，包括程序入口与 scheduler 监控</li>
+                <li><strong>动过并发相关算法</strong>，例如 select 的随机选择</li>
+                <li><strong>定制过错误输出</strong>，做成 Java 风格的 stack trace</li>
+                
+            </ul>
+
+            <p><strong>恭喜！</strong> 你已经有信心继续在 Go 源码里探险了。这些经验能帮你：</p>
+            <ul>
+                <li>开始给 Go 项目提交小贡献</li>
+                <li>打造自定义语言变体与工具</li>
+                <li>理解语言与 runtime 设计里的一些取舍</li>
+                
+            </ul>
+        </section>
+
+        <section class="contributing">
+            <h2>参与贡献</h2>
+            <p>发现问题、有改进想法，或想加新练习？欢迎 <a href="https://github.com/jespino/having-fun-with-the-go-source-code-workshop/issues">提 issue</a> 或提交 pull request！</p>
+        </section>
+
+        <div class="cta">
+            <a href="00-introduction-setup.html" class="cta-button">从练习 0 开始 →</a>
+        </div>
+    </div>
+
+    <footer>
+        <div class="container">
+            <p>玩转 Go 源码</p>
+            <p>作者 <strong>Jesús Espino</strong></p>
+            <div class="footer-links">
+                <a href="https://github.com/jespino" target="_blank"><i class="fab fa-github"></i> GitHub</a>
+                <a href="https://x.com/jespinog" target="_blank"><i class="fab fa-x-twitter"></i> @jespinog</a>
+                <a href="https://linkedin.com/in/jesus-espino" target="_blank"><i class="fab fa-linkedin"></i> LinkedIn</a>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

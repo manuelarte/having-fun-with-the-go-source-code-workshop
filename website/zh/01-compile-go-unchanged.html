@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>练习 1: 原样编译 Go - Go Source Code Workshop</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            hljs.highlightAll();
+
+            
+            document.querySelectorAll('pre').forEach(function(pre) {
+                const button = document.createElement('button');
+                button.className = 'copy-button';
+                button.innerHTML = '<i class="far fa-copy"></i>';
+                button.title = 'Copy to clipboard';
+
+                button.addEventListener('click', function() {
+                    const code = pre.querySelector('code');
+                    const text = code.textContent;
+
+                    navigator.clipboard.writeText(text).then(function() {
+                        button.innerHTML = '<i class="fas fa-check"></i>';
+                        button.classList.add('copied');
+                        setTimeout(function() {
+                            button.innerHTML = '<i class="far fa-copy"></i>';
+                            button.classList.remove('copied');
+                        }, 2000);
+                    }).catch(function(err) {
+                        console.error('Failed to copy:', err);
+                    });
+                });
+
+                pre.appendChild(button);
+            });
+        });
+    </script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <a href="index.html" class="nav-home">Having fun with the Go Source Code</a>
+            <div class="nav-links">
+                <a href="index.html">首页</a>
+                <label class="lang-switch">
+                    <i class="fas fa-globe" aria-hidden="true"></i>
+                    <select onchange="if (this.value) location.href = this.value" aria-label="Language">
+                        <option value="../01-compile-go-unchanged.html">English</option><option value="../es/01-compile-go-unchanged.html">Español</option><option value="" selected>中文</option>
+                    </select>
+                </label>
+                <a href="https://github.com/jespino/having-fun-with-the-go-source-code-workshop" target="_blank"><i class="fab fa-github"></i> Repository</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <article class="exercise-content">
+            <h1>练习 1: 原样编译 Go</h1>
+
+<p>在本练习中，你会学习如何在不做任何修改的情况下，从源码构建 Go toolchain。这是我们动手改语言之前必须掌握的基本功！</p>
+
+<h2>学习目标</h2>
+
+<p>完成本练习后，你将：</p>
+
+<ul>
+<li>理解 Go 的构建流程与 bootstrap 概念</li>
+<li>成功从源码编译 Go</li>
+<li>知道如何探索 Go 源码结构</li>
+<li>知道如何测试自己构建的 Go</li>
+</ul>
+
+<h2>第 1 步: 理解 Bootstrap 过程</h2>
+
+<p>Go 本身就是用 Go 写的！这就带来了“先有鸡还是先有蛋”的问题——没有 Go，怎么编译 Go？答案就是 bootstrapping：</p>
+
+<ol>
+<li>Go 团队提供预编译的二进制</li>
+<li>用这些二进制编译当前的 Go 源码</li>
+<li>新编译出来的版本再用于后续开发</li>
+</ol>
+
+<p>先确认你已安装 Go（bootstrapping 需要）：</p>
+
+<pre><code class="language-bash">go version
+# 必须显示 1.24 或更高版本
+</code></pre>
+
+<p><strong>⚠️ 关键</strong>：构建 Go 1.26.1 必须安装 Go 1.24 或更高版本。若未安装或版本过旧，请从 <a href="https://golang.org/dl/">https://golang.org/dl/</a> 安装最新版。</p>
+
+<h2>第 2 步: 进入 Go 源码目录</h2>
+
+<pre><code class="language-bash">cd go/src
+pwd
+# 应显示: /path/to/workshop/go/src
+
+# 确认当前 Go 版本正确
+git describe --tags
+# 应显示: go1.26.1
+</code></pre>
+
+<h2>第 3 步: 开始构建</h2>
+
+<p>Go 提供了多种构建脚本。我们先用 <code>make.bash</code> 构建 toolchain，构建过程中可以顺便逛逛源码！</p>
+
+<p><strong>在类 Unix 系统上（Linux、macOS）：</strong></p>
+
+<pre><code class="language-bash">./make.bash
+</code></pre>
+
+<p><strong>在 Windows 上：</strong></p>
+
+<pre><code class="language-cmd">make.bat
+</code></pre>
+
+<p>该脚本会：</p>
+
+<ol>
+<li>构建 Go toolchain（编译器、链接器、runtime、标准库）</li>
+<li>首次构建会从头编译所有内容，视机器性能大约需要 2–10 分钟</li>
+<li>之后的构建会快很多，因为只需重新编译改动过的文件及其依赖</li>
+</ol>
+
+<h3><code>all.bash</code> 和 <code>run.bash</code> 是做什么的？</h3>
+
+<p>你可能会注意到 <code>src/</code> 目录下还有其他脚本：</p>
+
+<ul>
+<li><strong><code>make.bash</code></strong>：只构建 Go toolchain（我们正在用的）</li>
+<li><strong><code>run.bash</code></strong>：跑完整测试套件（需要先构建好 Go）</li>
+<li><strong><code>all.bash</code></strong>：便捷脚本，依次执行 <code>make.bash</code> + <code>run.bash</code>，并打印构建信息</li>
+</ul>
+
+<p>对本工作坊来说，<code>make.bash</code> 最合适，因为：</p>
+
+<ul>
+<li>构建时间更短，少等一会儿</li>
+<li>我们只需要一个能用的 Go 来做实验</li>
+<li>需要时再单独用 <code>run.bash</code> 跑测试即可</li>
+</ul>
+
+<h2>第 4 步: 构建过程中探索源码</h2>
+
+<p>构建跑着的时候，打开<strong>新终端</strong>或 <strong>IDE</strong>，一起看看 Go 源码结构吧！这正是理解“我们在构建什么”的好时机。</p>
+
+<p><strong>在新终端中：</strong></p>
+
+<pre><code class="language-bash">cd /path/to/workshop/go  # 进入你的 Go 源码目录
+ls -la
+</code></pre>
+
+<h3>仓库结构</h3>
+
+<p>你应该能看到这些关键目录：</p>
+
+<ul>
+<li><strong><code>src/</code></strong>：Go 源码所在
+
+<ul>
+<li><code>src/cmd/</code>：命令行工具（go、gofmt 等）——其中包括 <code>cmd/compile/</code>，也就是我们后面要改的编译器代码</li>
+<li><code>src/runtime/</code>：Go runtime 系统</li>
+<li><code>src/go/</code>：面向开发者工具的 Go 语言包（parser、AST 等）——编译器本身不用这些包</li>
+</ul></li>
+<li><strong><code>test/</code></strong>：Go 语言相关测试</li>
+<li><strong><code>api/</code></strong>：API 兼容性数据</li>
+<li><strong><code>doc/</code></strong>：文档</li>
+</ul>
+
+<h3>查看 Go 编译器结构</h3>
+
+<p>再仔细看看 <code>src/cmd/compile/</code>：</p>
+
+<pre><code class="language-bash">cd src/cmd/compile
+ls -la
+</code></pre>
+
+<p>关键文件与目录：</p>
+
+<ul>
+<li><strong><code>main.go</code></strong>：编译器入口</li>
+<li><strong><code>internal/</code></strong>：编译器内部包
+
+<ul>
+<li><code>internal/syntax/</code>：把源码变成 token（scanner），再构建语法树（parser）</li>
+<li><code>internal/types2/</code>：类型检查（例如不能把 string 和 int 相加）</li>
+<li><code>internal/ir/</code>：中间表示（Intermediate Representation）——解析和类型检查之后，编译器对程序的内部模型，用于分析和优化，再生成机器码</li>
+<li><code>internal/ssa/</code>：Static Single Assignment 形式——把 IR 变成更底层的表示，每个变量只赋值一次，便于做死代码消除、常量传播等强力优化</li>
+<li><code>internal/gc/</code>：编排整个编译流水线，协调从解析到机器码生成的各个阶段</li>
+</ul></li>
+</ul>
+
+<h2>第 5 步: 理解构建输出</h2>
+
+<p><strong>切回原来正在构建的终端</strong>。构建推进时，你会看到类似输出：</p>
+
+<pre><code>Building Go cmd/dist using /usr/local/go. (go1.26.1 darwin/amd64)
+Building Go toolchain1 using /usr/local/go.
+Building Go bootstrap cmd/go (go_bootstrap) using Go toolchain1.
+Building Go toolchain2 using go_bootstrap and Go toolchain1.
+Building Go toolchain3 using go_bootstrap and Go toolchain2.
+Building packages and commands for darwin/amd64.
+</code></pre>
+
+<p>逐行含义：</p>
+
+<ol>
+<li><p><strong><code>Building Go cmd/dist using /usr/local/go</code></strong>：先构建 <code>dist</code>，一个管理后续构建流程的小工具。用系统里的 Go（<code>/usr/local/go</code>）来编译它。</p></li>
+
+<li><p><strong><code>Building Go toolchain1 using /usr/local/go</code></strong>：系统 Go 编译 Go 1.26.1 的编译器源码，得到 <code>toolchain1</code>——新编译器的第一版，但是由旧版 Go 构建出来的。</p></li>
+
+<li><p><strong><code>Building Go bootstrap cmd/go (go_bootstrap) using Go toolchain1</code></strong>：用 <code>toolchain1</code> 构建 <code>go_bootstrap</code>，这是管理后续构建步骤所需的精简版 <code>go</code> 命令。</p></li>
+
+<li><p><strong><code>Building Go toolchain2 using go_bootstrap and Go toolchain1</code></strong>：现在 <code>toolchain1</code> 开始“编译自己”——再次编译同一份 Go 1.26.1 编译器源码，但这次用的是新编译器，而不是系统 Go。结果是 <code>toolchain2</code>。</p></li>
+
+<li><p><strong><code>Building Go toolchain3 using go_bootstrap and Go toolchain2</code></strong>：<code>toolchain2</code> 再编译同一份源码，得到 <code>toolchain3</code>。因为 <code>toolchain2</code> 和 <code>toolchain3</code> 都由等价编译器从同一源码构建，二进制应当一致——用来验证构建可复现。</p></li>
+
+<li><p><strong><code>Building packages and commands for darwin/amd64</code></strong>：最后用验证过的 toolchain 编译标准库以及所有 Go 工具（<code>go</code>、<code>gofmt</code> 等），目标平台为你当前的系统。</p></li>
+</ol>
+
+<h2>第 6 步: 找到编译出的 Go 二进制</h2>
+
+<p>编译成功后，新的 Go 二进制位于：</p>
+
+<pre><code class="language-bash">ls -la /path/to/workshop/go/bin
+</code></pre>
+
+<p>你应该能看到：</p>
+
+<ul>
+<li><code>go</code> - 主 Go 命令</li>
+<li><code>gofmt</code> - Go 格式化工具</li>
+</ul>
+
+<h2>第 7 步: 测试自定义 Go 构建</h2>
+
+<p>来测一下刚编译好的 Go：</p>
+
+<pre><code class="language-bash"># 查看你编译出的 Go 版本
+../bin/go version
+</code></pre>
+
+<p>在临时目录（例如 <code>/tmp</code>）创建一个 hello.go：</p>
+
+<pre><code class="language-go">package main
+
+import &quot;fmt&quot;
+
+func main() {
+    fmt.Println(&quot;Hello from my custom Go build!&quot;)
+}
+</code></pre>
+
+<pre><code class="language-bash"># 用你自定义的 Go 编译并运行
+/path/to/workshop/go/bin/go run /tmp/hello.go
+</code></pre>
+
+<h2>⚠️ 故障排查</h2>
+
+<h3>GOROOT 干扰</h3>
+
+<p>若运行 <code>../bin/go run /tmp/hello.go</code>（或二进制完整路径）结果异常，或实际用的是系统 Go 而不是新构建的版本，可能需要先取消 <code>GOROOT</code> 环境变量：</p>
+
+<pre><code class="language-bash">unset GOROOT
+/path/to/workshop/go/bin/go run /tmp/hello.go
+</code></pre>
+
+<p>原因是系统 Go 安装可能设置了 <code>GOROOT</code>，导致新二进制指向了错误的标准库和工具。取消后，二进制会根据自身位置自动检测 root 目录。</p>
+
+<h2>你学到了什么</h2>
+
+<ul>
+<li><strong>Bootstrap 过程</strong>：Go 用已有的 Go 安装来编译自己</li>
+<li><strong>Go 源码结构</strong>：组织清晰，职责分明（cmd/、runtime/ 等）</li>
+<li><strong>构建流程</strong>：<code>./make.bash</code> 会把该构建的都构建好</li>
+</ul>
+
+<h2>下一步</h2>
+
+<p>恭喜！你已经拥有一套从源码构建的可用 Go toolchain。</p>
+
+<p>接下来可以任选下列练习，深入了解 Go 的不同部分：</p>
+
+<ul>
+<li><a href="02-scanner-arrow-operator.html">练习 2: 为 Goroutine 添加 &ldquo;=&gt;&rdquo; 箭头运算符</a> - Scanner 改造</li>
+<li><a href="03-parser-multiple-go.html">练习 3: 多个 &ldquo;go&rdquo; 关键字 - Parser 增强</a> - Parser 改造</li>
+<li><a href="04-compiler-inlining-parameters.html">练习 4: 内联参数 - 函数 Inlining 实验</a> - 编译器参数</li>
+<li><a href="05-gofmt-ast-transformation.html">练习 5: gofmt 变换 - &ldquo;hello&rdquo; 变成 &ldquo;helo&rdquo;</a> - AST 变换</li>
+<li><a href="06-ssa-power-of-two-detector.html">练习 6: SSA Pass - 检测除以 2 的幂</a> - SSA 编译器 pass</li>
+<li><a href="07-runtime-patient-go.html">练习 7: 耐心的 Go - 让 Go 等待 Goroutine</a> - Runtime 改造</li>
+<li><a href="08-goroutine-sleep-detective.html">练习 8: Goroutine 睡眠侦探 - Runtime 状态监控</a> - 调度器监控</li>
+<li><a href="09-predictable-select.html">练习 9: 可预测的 Select - 去掉 Select 的随机性</a> - Select 行为</li>
+<li><a href="10-java-style-stack-traces.html">练习 10: Java 风格 Stack Trace - 让 Go Panic 更眼熟</a> - 错误格式</li>
+<li><a href="11-dnd-work-stealing.html">练习 11: D&amp;D Work Stealing - 为 Goroutine 掷骰</a> - 调度器 work stealing</li>
+</ul>
+
+<p>或返回 <a href="index.html">工作坊主页</a> 选择练习。</p>
+
+        </article>
+
+        <nav class="exercise-nav">
+            
+            <a href="00-introduction-setup.html" class="nav-button">← 上一篇</a>
+            
+            
+            <a href="02-scanner-arrow-operator.html" class="nav-button">下一篇: 练习 2 →</a>
+            
+        </nav>
+    </div>
+
+    <footer>
+        <div class="container">
+            <p>Having fun with the Go Source Code</p>
+            <p>作者 <strong>Jesús Espino</strong></p>
+            <div class="footer-links">
+                <a href="https://github.com/jespino" target="_blank"><i class="fab fa-github"></i> GitHub</a>
+                <a href="https://x.com/jespinog" target="_blank"><i class="fab fa-x-twitter"></i> @jespinog</a>
+                <a href="https://linkedin.com/in/jesus-espino" target="_blank"><i class="fab fa-linkedin"></i> LinkedIn</a>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

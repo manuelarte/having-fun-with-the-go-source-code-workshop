@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>练习 4: Inline 参数 —— 函数内联实验 - Go Source Code Workshop</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            hljs.highlightAll();
+
+            
+            document.querySelectorAll('pre').forEach(function(pre) {
+                const button = document.createElement('button');
+                button.className = 'copy-button';
+                button.innerHTML = '<i class="far fa-copy"></i>';
+                button.title = 'Copy to clipboard';
+
+                button.addEventListener('click', function() {
+                    const code = pre.querySelector('code');
+                    const text = code.textContent;
+
+                    navigator.clipboard.writeText(text).then(function() {
+                        button.innerHTML = '<i class="fas fa-check"></i>';
+                        button.classList.add('copied');
+                        setTimeout(function() {
+                            button.innerHTML = '<i class="far fa-copy"></i>';
+                            button.classList.remove('copied');
+                        }, 2000);
+                    }).catch(function(err) {
+                        console.error('Failed to copy:', err);
+                    });
+                });
+
+                pre.appendChild(button);
+            });
+        });
+    </script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <a href="index.html" class="nav-home">Having fun with the Go Source Code</a>
+            <div class="nav-links">
+                <a href="index.html">首页</a>
+                <label class="lang-switch">
+                    <i class="fas fa-globe" aria-hidden="true"></i>
+                    <select onchange="if (this.value) location.href = this.value" aria-label="Language">
+                        <option value="../04-compiler-inlining-parameters.html">English</option><option value="../es/04-compiler-inlining-parameters.html">Español</option><option value="" selected>中文</option>
+                    </select>
+                </label>
+                <a href="https://github.com/jespino/having-fun-with-the-go-source-code-workshop" target="_blank"><i class="fab fa-github"></i> Repository</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <article class="exercise-content">
+            <h1>练习 4: 编译器 Inlining 参数 — 调参控制 Binary 体积</h1>
+
+<blockquote>
+<p>📖 <strong>想深入了解？</strong> 阅读 Internals for Interns 上的 <a href="https://internals-for-interns.com/posts/the-go-ir/">The IR</a>，深入理解 Go 的 intermediate representation，包括函数 inlining 决策是如何做出的。</p>
+</blockquote>
+
+<p>在本练习中，你将探索并修改 Go 的 inlining 参数，观察它们对 binary 体积的显著影响。这会教你 Go 编译器如何决定何时 inline 函数，以及微调这些参数会如何大幅改变编译结果。</p>
+
+<h2>学习目标</h2>
+
+<p>完成本练习后，你将能够：</p>
+
+<ul>
+<li>理解 Go 的 inlining budget 体系及其参数</li>
+<li>知道编译器中 inlining 决策发生在哪里</li>
+<li>修改 inlining 阈值以控制优化行为</li>
+<li>衡量改动对 binary 体积的影响</li>
+</ul>
+
+<h2>简介：什么是 IR？</h2>
+
+<p>在 parsing 和 type-checking 之后，编译器会把 AST 转换成 <strong>Intermediate Representation（IR）</strong>。AST 更贴近你在源码里写下的结构，而 IR 是另一种表示形式，更适合编译器做分析和变换。</p>
+
+<p>IR 用大约 150 种操作码（如 <code>OADD</code>、<code>OCALL</code>、<code>OIF</code>）表示代码中的每一步操作。每个 IR 节点都带有类型信息，并按 package 组织。这一阶段会做出许多重要的优化决策——其中影响最大的之一就是 <strong>function inlining</strong>。</p>
+
+<p>编译器会用一个 &ldquo;hairiness visitor&rdquo; 遍历 IR 树，给每个节点打上成本分。若某个函数的总成本落在 <strong>inlining budget</strong>（默认：80 个节点）以内，该函数就有资格被 inline。函数调用的成本是 57 个节点，简单语句是 1 个节点。当在调用点 inline 一个函数时，编译器会复制其函数体，并把参数替换为实参。</p>
+
+<p>你可以用 <code>go build -gcflags='-m'</code>（或 <code>-m=2</code> 看更详细原因）观察 inlining 决策。</p>
+
+<h2>背景：Go 中的 Function Inlining</h2>
+
+<p>Function inlining 是一种编译器优化：用函数体本身替换函数调用。这是在用 binary 体积换性能：</p>
+
+<p><strong>收益：</strong></p>
+
+<ul>
+<li>消除调用开销</li>
+<li>便于在调用点做进一步优化</li>
+<li>更好的指令流水线利用率</li>
+</ul>
+
+<p><strong>代价：</strong></p>
+
+<ul>
+<li>binary 体积变大</li>
+<li>程序运行时占用更多内存</li>
+</ul>
+
+<p>Go 使用一套精巧的 <strong>budget 体系</strong> 来判断何时 inline 是划算的。</p>
+
+<h2>第 1 步：理解 Go 的 Inlining Budget</h2>
+
+<p>先看看当前的 inlining 参数：</p>
+
+<pre><code class="language-bash">cd go/src/cmd/compile/internal/inline
+</code></pre>
+
+<p>打开 <code>inl.go</code>，查看大约第 49–85 行的关键参数：</p>
+
+<h3>关键 Inlining 参数</h3>
+
+<p>摘自 <code>go/src/cmd/compile/internal/inline/inl.go:49-85</code>：</p>
+
+<pre><code class="language-go">const (
+    inlineMaxBudget       = 80
+    inlineExtraAppendCost = 0
+    inlineExtraCallCost   = 57              // benchmarked to provide most benefit
+    inlineParamCallCost   = 17              // calling a parameter costs less
+    inlineExtraPanicCost  = 1               // do not penalize inlining panics
+    inlineExtraThrowCost  = inlineMaxBudget // inlining runtime.throw does not help
+
+    inlineBigFunctionNodes      = 5000                 // Functions with this many nodes are &quot;big&quot;
+    inlineBigFunctionMaxCost    = 20                   // Max cost when inlining into a &quot;big&quot; function
+    inlineClosureCalledOnceCost = 10 * inlineMaxBudget // if a closure is called once, inline it
+)
+
+var (
+    // ...
+    // Budget increased due to hotness (PGO).
+    inlineHotMaxBudget int32 = 2000
+)
+</code></pre>
+
+<p><strong>说明：</strong> <code>inlineHotMaxBudget</code> 是 <code>var</code> 而不是 <code>const</code>，因为它服务于 PGO（Profile Guided Optimization），可能在运行时被修改。</p>
+
+<h3>Budget 体系如何工作</h3>
+
+<p>每条 Go 语句/表达式都有一个 <strong>成本</strong>：</p>
+
+<ul>
+<li>简单语句：1 分</li>
+<li>函数调用：57+ 分</li>
+<li>循环、条件：各 1 分</li>
+<li>复杂表达式：分数不定</li>
+</ul>
+
+<p>编译器把成本累加，再与 budget 比较。</p>
+
+<h2>第 2 步：用 Go 编译器 Binary 做体积对比</h2>
+
+<p>与其写玩具程序，不如直接把 Go 编译器 binary 本身当作测试对象！<code>bin/go</code> 非常适合展示 inlining 的效果，因为：</p>
+
+<ul>
+<li><strong>代码体量大</strong> — 能看出有意义的体积差异</li>
+<li><strong>真实世界代码</strong> — 包含我们真正在优化的那些模式</li>
+<li><strong>与工作坊相关</strong> — 整个练习过程都在构建它</li>
+<li><strong>效果明显</strong> — 体量足够大，能展现显著的 inlining 影响</li>
+</ul>
+
+<h3>在 Go Binary 上测试不同 Inlining 设置</h3>
+
+<p>我们用不同的 inlining 设置重新构建整个 Go toolchain，然后对比 <code>bin/go</code> 的体积：</p>
+
+<pre><code class="language-bash">cd go/src
+</code></pre>
+
+<h3>基线构建 — 默认设置</h3>
+
+<p>先用默认 inlining 设置构建，并备份 binary：</p>
+
+<pre><code class="language-bash"># Build with default settings
+./make.bash
+
+# Copy the default Go binary for comparison
+cp ../bin/go ../bin/go-default
+
+# Check the size
+ls -lh ../bin/go-default
+wc -c ../bin/go-default
+</code></pre>
+
+<h3>查看 Inlining 对 Go 编译器自身构建的影响</h3>
+
+<p>我们可以观察编译 Go 编译器时，inlining 是如何起作用的：</p>
+
+<pre><code class="language-bash"># See inlining decisions when compiling the Go compiler
+# This shows how inlining parameters affect the compiler's own build process
+cd cmd/compile
+../../bin/go build -gcflags=&quot;-m&quot; . 2&gt;&amp;1 | grep &quot;can inline&quot; | wc -l
+echo &quot;Functions that can be inlined during Go compiler build&quot;
+</code></pre>
+
+<h2>第 3 步：修改 Inlining 参数</h2>
+
+<p>现在来改 inlining 参数，看看效果！</p>
+
+<h3>实验 1：激进 Inlining</h3>
+
+<p>编辑 <code>go/src/cmd/compile/internal/inline/inl.go</code> 大约第 50 行：</p>
+
+<pre><code class="language-go">const (
+    inlineMaxBudget       = 95    // Increased from 80
+    inlineExtraCallCost   = 40    // Decreased from 57
+    inlineBigFunctionMaxCost = 30 // Increased from 20
+)
+</code></pre>
+
+<blockquote>
+<p><strong>⚠️ 注意：</strong> 别把这些值调得过高！在 Go 1.26.1 中，runtime 对 write barrier 有严格约束；若把 inlining budget 调到大约超过 95，编译器会把函数 inline 进禁止 write barrier 的上下文，导致构建失败。这本身就是很好的一课：编译器参数需要精细平衡。</p>
+</blockquote>
+
+<p><strong>重新构建编译器：</strong></p>
+
+<pre><code class="language-bash">cd go/src
+./make.bash
+</code></pre>
+
+<p><strong>在 Go binary 上测试激进 inlining：</strong></p>
+
+<pre><code class="language-bash"># Copy the aggressively-inlined Go binary
+cp ../bin/go ../bin/go-aggressive
+
+# Compare sizes
+echo &quot;Default size: $(wc -c &lt; ../bin/go-default)&quot;
+echo &quot;Aggressive size: $(wc -c &lt; ../bin/go-aggressive)&quot;
+
+# Calculate size difference
+default_size=$(wc -c &lt; ../bin/go-default)
+aggressive_size=$(wc -c &lt; ../bin/go-aggressive)
+echo &quot;Size difference: $(($aggressive_size - $default_size)) bytes&quot;
+echo &quot;Percentage increase: $(echo &quot;scale=2; ($aggressive_size - $default_size) * 100 / $default_size&quot; | bc)%&quot;
+</code></pre>
+
+<h3>实验 2：保守 Inlining</h3>
+
+<p>接下来试试保守设置。编辑参数：</p>
+
+<pre><code class="language-go">const (
+    inlineMaxBudget       = 40    // Decreased from 80
+    inlineExtraCallCost   = 100   // Increased from 57
+    inlineBigFunctionMaxCost = 5  // Decreased from 20
+)
+</code></pre>
+
+<p><strong>重新构建并测试：</strong></p>
+
+<pre><code class="language-bash">cd go/src
+./make.bash
+
+# Copy the conservatively-inlined Go binary
+cp ../bin/go ../bin/go-conservative
+
+# Compare all three Go binaries
+echo &quot;Conservative size: $(wc -c &lt; ../bin/go-conservative)&quot;
+echo &quot;Default size: $(wc -c &lt; ../bin/go-default)&quot;
+echo &quot;Aggressive size: $(wc -c &lt; ../bin/go-aggressive)&quot;
+</code></pre>
+
+<h2>第 4 步：全面的 Binary 体积分析</h2>
+
+<p>再试试更极端的 inlining 设置，观察对 Go 编译器 binary 的戏剧性影响：</p>
+
+<h3>实验 3：完全不做 Inlining</h3>
+
+<p>作为对比，彻底关闭 inlining：</p>
+
+<pre><code class="language-go">const (
+    inlineMaxBudget       = 0     // No inlining budget
+    inlineExtraCallCost   = 1000  // Prohibitive call cost
+    inlineBigFunctionMaxCost = 0  // No big function inlining
+)
+</code></pre>
+
+<pre><code class="language-bash">cd go/src
+./make.bash
+
+# Copy the no-inlining Go binary
+cp ../bin/go ../bin/go-no-inline
+</code></pre>
+
+<h3>实验 4：极端 Inlining — 演示崩溃临界点</h3>
+
+<p>试试非常激进的设置，看看把 inlining 推得过远会发生什么：</p>
+
+<pre><code class="language-go">const (
+    inlineMaxBudget       = 500   // Very high budget
+    inlineExtraCallCost   = 5     // Very low call cost
+    inlineBigFunctionMaxCost = 200 // Very high big function budget
+)
+</code></pre>
+
+<pre><code class="language-bash">cd go/src
+./make.bash
+</code></pre>
+
+<p><strong>⚠️ 预期结果：</strong> 这次构建会失败！你会看到 &ldquo;write barrier prohibited by caller&rdquo; 之类的错误。原因是：编译器把 runtime 函数 inline 进了不允许 write barrier 的上下文，形成了非法的调用链。</p>
+
+<p>如果失败了（这是预期的），你会学到：</p>
+
+<ul>
+<li>极端 inlining 会在 runtime 中触发 write barrier 违规</li>
+<li>Go runtime 里有 <code>//go:nowritebarrierrec</code> 注解，禁止某些调用链中出现 write barrier</li>
+<li>一旦 inlining 暴露了这些调用链，编译器会正确地拒绝构建</li>
+<li>默认参数经过精心平衡，是有道理的</li>
+</ul>
+
+<h2>第 5 步：分析结果</h2>
+
+<p>对比各个 Go 编译器 binary 的体积：</p>
+
+<pre><code class="language-bash">cd go
+
+echo &quot;=== GO COMPILER BINARY SIZE COMPARISON ===&quot;
+echo &quot;No Inlining:  $(wc -c &lt; bin/go-no-inline) bytes&quot;
+echo &quot;Conservative: $(wc -c &lt; bin/go-conservative) bytes&quot;
+echo &quot;Default:      $(wc -c &lt; bin/go-default) bytes&quot;
+echo &quot;Aggressive:   $(wc -c &lt; bin/go-aggressive) bytes&quot;
+
+echo &quot;&quot;
+echo &quot;=== SIZE DIFFERENCES ===&quot;
+no_inline_size=$(wc -c &lt; bin/go-no-inline)
+conservative_size=$(wc -c &lt; bin/go-conservative)
+default_size=$(wc -c &lt; bin/go-default)
+aggressive_size=$(wc -c &lt; bin/go-aggressive)
+
+echo &quot;No-inline vs Default: $(($default_size - $no_inline_size)) bytes difference&quot;
+echo &quot;Default vs Aggressive: $(($aggressive_size - $default_size)) bytes difference&quot;
+echo &quot;Full Range (No-inline to Aggressive): $(($aggressive_size - $no_inline_size)) bytes difference&quot;
+
+# Calculate percentages
+echo &quot;&quot;
+echo &quot;=== PERCENTAGE DIFFERENCES ===&quot;
+echo &quot;Aggressive vs Default: $(echo &quot;scale=2; ($aggressive_size - $default_size) * 100 / $default_size&quot; | bc)%&quot;
+echo &quot;Default vs No-inline: $(echo &quot;scale=2; ($default_size - $no_inline_size) * 100 / $no_inline_size&quot; | bc)%&quot;
+</code></pre>
+
+<h2>理解我们改了什么</h2>
+
+<h3>关键参数的作用</h3>
+
+<table>
+<thead>
+<tr>
+<th>参数</th>
+<th>作用</th>
+<th>影响</th>
+</tr>
+</thead>
+
+<tbody>
+<tr>
+<td><code>inlineMaxBudget</code></td>
+<td>任意被 inline 函数的最大成本</td>
+<td>越高 → 越多 inlining</td>
+</tr>
+
+<tr>
+<td><code>inlineExtraCallCost</code></td>
+<td>被 inline 函数内部再调用函数的惩罚</td>
+<td>越低 → 越激进</td>
+</tr>
+
+<tr>
+<td><code>inlineBigFunctionMaxCost</code></td>
+<td>向大型函数中 inline 时的最大成本</td>
+<td>越高 → 大函数里越多 inlining</td>
+</tr>
+
+<tr>
+<td><code>inlineBigFunctionNodes</code></td>
+<td>判定「大函数」的节点数阈值</td>
+<td>越低 → 更多函数被当作「大函数」</td>
+</tr>
+</tbody>
+</table>
+
+<h3>你通常会看到的结果</h3>
+
+<p>以 Go 编译器 binary 为例，你应该能观察到明显的体积差异：</p>
+
+<ul>
+<li><strong>完全不 Inlining</strong>：体积最小</li>
+<li><strong>保守</strong>：比默认略小</li>
+<li><strong>默认</strong>：体积较均衡</li>
+<li><strong>激进</strong>：比默认更大</li>
+</ul>
+
+<p><strong>关键洞察：</strong></p>
+
+<ul>
+<li>即便只是温和地改 inlining 参数，也能测出可感知的 binary 体积差异</li>
+<li>从完全不做 inlining 到激进 inlining 的跨度，能直观展现这项优化的影响</li>
+<li>更激进的取值会受 runtime 约束限制（write barrier）</li>
+</ul>
+
+<p>具体体积因系统而异，但你应该会看到类似的显著差异。</p>
+
+<h2>你学到了什么</h2>
+
+<ul>
+<li><strong>Budget 体系</strong>：Go 如何基于成本分析做 inlining 决策</li>
+<li><strong>参数影响</strong>：不同设置如何影响 binary 体积与性能</li>
+<li><strong>测量技巧</strong>：用 debug 标志理解编译器决策</li>
+<li><strong>权衡取舍</strong>：binary 体积与性能之间的根本张力</li>
+<li><strong>编译器调参</strong>：如何按特定需求修改编译器行为</li>
+</ul>
+
+<h2>扩展思路</h2>
+
+<p>可以试试这些额外实验：</p>
+
+<ol>
+<li>写脚本自动测试不同参数组合</li>
+<li>用真实世界的 Go 程序测试（比如构建 Go 自身！）</li>
+<li>测量不同设置下的编译时间差异</li>
+<li>实验 PGO（Profile-Guided Optimization）相关参数</li>
+<li>分析 inline 与未 inline 调用在汇编输出上的差异</li>
+</ol>
+
+<h2>下一步</h2>
+
+<p>你已经学会了如何调节 Go 的 inlining 行为，并亲眼看到了它对 binary 体积和性能的真实影响。接下来的练习中，我们会探索如何修改 gofmt 工具。</p>
+
+<h2>清理</h2>
+
+<p>恢复原始 inlining 参数，并清理测试 binary：</p>
+
+<pre><code class="language-bash">cd go/src/cmd/compile/internal/inline
+git checkout inl.go
+cd ../../../../
+
+# Rebuild with original parameters
+cd src
+./make.bash
+
+# Clean up test binaries
+rm -f ../bin/go-default ../bin/go-aggressive ../bin/go-conservative ../bin/go-no-inline
+</code></pre>
+
+<h2>关键收获</h2>
+
+<ol>
+<li><strong>Inlining 是一种权衡</strong>：更多 inlining = 更大的 binary，但可能更快的执行</li>
+<li><strong>Budget 体系</strong>：Go 用精巧的成本分析做 inlining 决策</li>
+<li><strong>参数影响大</strong>：参数上的小改动，输出上可能有显著差别</li>
+<li><strong>调试工具</strong>：Go 提供了很好的工具来理解编译器决策</li>
+<li><strong>贴近现实</strong>：这些参数会影响你编译的每一个 Go 程序</li>
+</ol>
+
+<p>Go 编译器团队通过大量 benchmark 精心调过这些默认值——但现在你已经明白如何按自己的需求去调整它们了。</p>
+
+<hr />
+
+<p><em>继续 <a href="05-gofmt-ast-transformation.html">练习 5</a>，或返回 <a href="index.html">工作坊主页</a></em></p>
+
+        </article>
+
+        <nav class="exercise-nav">
+            
+            <a href="03-parser-multiple-go.html" class="nav-button">← 上一篇</a>
+            
+            
+            <a href="05-gofmt-ast-transformation.html" class="nav-button">下一篇: 练习 5 →</a>
+            
+        </nav>
+    </div>
+
+    <footer>
+        <div class="container">
+            <p>Having fun with the Go Source Code</p>
+            <p>作者 <strong>Jesús Espino</strong></p>
+            <div class="footer-links">
+                <a href="https://github.com/jespino" target="_blank"><i class="fab fa-github"></i> GitHub</a>
+                <a href="https://x.com/jespinog" target="_blank"><i class="fab fa-x-twitter"></i> @jespinog</a>
+                <a href="https://linkedin.com/in/jesus-espino" target="_blank"><i class="fab fa-linkedin"></i> LinkedIn</a>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="es">
+<html lang="zh">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ejercicio 0: Introducción y Configuración - Go Source Code Workshop</title>
+    <title>练习 0: 简介与环境搭建 - Go Source Code Workshop</title>
     <link rel="stylesheet" href="../style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
@@ -46,11 +46,11 @@
         <div class="container">
             <a href="index.html" class="nav-home">Having fun with the Go Source Code</a>
             <div class="nav-links">
-                <a href="index.html">Inicio</a>
+                <a href="index.html">首页</a>
                 <label class="lang-switch">
                     <i class="fas fa-globe" aria-hidden="true"></i>
                     <select onchange="if (this.value) location.href = this.value" aria-label="Language">
-                        <option value="../00-introduction-setup.html">English</option><option value="" selected>Español</option><option value="../zh/00-introduction-setup.html">中文</option>
+                        <option value="../00-introduction-setup.html">English</option><option value="../es/00-introduction-setup.html">Español</option><option value="" selected>中文</option>
                     </select>
                 </label>
                 <a href="https://github.com/jespino/having-fun-with-the-go-source-code-workshop" target="_blank"><i class="fab fa-github"></i> Repository</a>
@@ -60,92 +60,92 @@
 
     <div class="container">
         <article class="exercise-content">
-            <h1>Ejercicio 0: Introducción y Configuración del Entorno</h1>
+            <h1>练习 0: 简介与环境搭建</h1>
 
-<p>Bienvenido al taller de código fuente de Go. En este ejercicio introductorio, prepararás tu entorno de desarrollo y te familiarizarás con el repositorio del código fuente de Go.</p>
+<p>欢迎来到 Go 源码工作坊！在这个入门练习中，你会搭建好开发环境，并熟悉 Go 源码仓库。</p>
 
-<h2>Objetivos de Aprendizaje</h2>
+<h2>学习目标</h2>
 
-<p>Al finalizar este ejercicio, serás capaz de:</p>
+<p>完成本练习后，你将：</p>
 
 <ul>
-<li>Tener un entorno de desarrollo de Go funcional</li>
-<li>Saber cómo obtener el código fuente de Go</li>
+<li>拥有一套可用的 Go 开发环境</li>
+<li>知道如何获取 Go 源码</li>
 </ul>
 
-<h2>Requisitos Previos</h2>
+<h2>前置要求</h2>
 
-<p>Asegúrate de tener lo siguiente instalado:</p>
+<p>请确保已安装：</p>
 
 <ul>
 <li>Git</li>
-<li>Al menos 4GB de espacio libre en disco</li>
+<li>至少 4GB 可用磁盘空间</li>
 </ul>
 
-<h2>Paso 1: Instalar o Actualizar Go</h2>
+<h2>第 1 步: 安装或升级 Go</h2>
 
-<p><strong>⚠️ Importante</strong>: Necesitas una instalación existente de Go (versión 1.24 o superior) para compilar Go desde el código fuente. Esto se conoce como &ldquo;bootstrapping&rdquo;: usar un compilador de Go existente para compilar el nuevo.</p>
+<p><strong>⚠️ 重要</strong>：从源码构建 Go 需要系统中已有 Go 安装（版本 1.24 或更高）。这称为 bootstrapping——用已有的 Go 编译器来构建新的 Go。</p>
 
-<h3>Verifica tu Versión Actual de Go</h3>
+<h3>检查当前 Go 版本</h3>
 
 <pre><code class="language-bash">go version
-# Debería mostrar: go version go1.24 o superior
+# 应显示: go version go1.24 或更高
 </code></pre>
 
-<h3>Si Go no está Instalado o es una Versión Antigua</h3>
+<h3>若未安装 Go 或版本过旧</h3>
 
-<p>Si no tienes Go instalado, o tu versión es anterior a la 1.24:</p>
+<p>如果你还没有安装 Go，或版本低于 1.24：</p>
 
 <ol>
-<li><strong>Descarga Go</strong>: Visita <a href="https://go.dev/dl/">https://go.dev/dl/</a> y descarga el instalador apropiado para tu sistema operativo</li>
-<li><strong>Instala Go</strong>: Sigue la guía oficial de instalación para tu plataforma</li>
-<li><strong>Verifica la instalación</strong>: Abre una nueva terminal y ejecuta:</li>
+<li><strong>下载 Go</strong>：访问 <a href="https://go.dev/dl/">https://go.dev/dl/</a>，下载适合你操作系统的安装包</li>
+<li><strong>安装 Go</strong>：按对应平台的官方安装指南操作</li>
+<li><strong>验证安装</strong>：打开新终端并运行：</li>
 </ol>
 
 <pre><code class="language-bash">   go version
-   # Debería mostrar: go version go1.24 o superior
+   # 应显示: go version go1.24 或更高
 </code></pre>
 
-<p><strong>Ayuda con la instalación</strong>: Si necesitas instrucciones detalladas de instalación, consulta la <a href="https://go.dev/doc/install">guía oficial de instalación de Go</a>.</p>
+<p><strong>安装帮助</strong>：如需详细安装步骤，请参阅 <a href="https://go.dev/doc/install">Go 官方安装指南</a>。</p>
 
-<h2>Paso 2: Clonar el Código Fuente de Go</h2>
+<h2>第 2 步: Clone Go 源码</h2>
 
-<p>Vamos a clonar el repositorio oficial de Go. Usamos <code>--depth 1</code> para evitar descargar todo el historial, lo que hace que la clonación sea mucho más rápida:</p>
+<p>接下来 clone 官方 Go 仓库。使用 <code>--depth 1</code> 可避免下载完整历史，clone 会快很多：</p>
 
-<p>Para mantener la consistencia a lo largo del taller, usaremos la versión 1.26.1 de Go.</p>
+<p>为保证整个工作坊版本一致，我们使用 Go 1.26.1。</p>
 
 <pre><code class="language-bash">git clone --depth 1 --branch go1.26.1 https://go.googlesource.com/go
 cd go
 </code></pre>
 
-<h2>Paso 3: Verificar la Versión Go 1.26.1</h2>
+<h2>第 3 步: 确认 Go 版本为 1.26.1</h2>
 
-<p>Verifica que estás en la versión correcta:</p>
+<p>确认当前处于正确版本：</p>
 
 <pre><code class="language-bash">git describe --tags
-# Debería mostrar: go1.26.1
+# 应显示: go1.26.1
 </code></pre>
 
-<h2>Lo que Hemos Logrado</h2>
+<h2>我们完成了什么</h2>
 
 <ul>
-<li>Instalamos o verificamos Go 1.24+ para el bootstrapping</li>
-<li>Clonamos el repositorio oficial de Go en la versión 1.26.1</li>
-<li>El entorno está listo para compilar Go desde el código fuente</li>
+<li>安装或验证了用于 bootstrapping 的 Go 1.24+</li>
+<li>以 1.26.1 版本 clone 了官方 Go 仓库</li>
+<li>环境已就绪，可以开始从源码构建 Go</li>
 </ul>
 
-<h2>Siguientes Pasos</h2>
+<h2>下一步</h2>
 
-<p>Perfecto. Tu entorno está configurado y listo. En el <a href="01-compile-go-unchanged.html">Ejercicio 1: Compilar Go sin Cambios</a>, compilarás la toolchain de Go desde el código fuente y explorarás la estructura del compilador de Go mientras se compila.</p>
+<p>很好！环境已经搭好。在 <a href="01-compile-go-unchanged.html">练习 1: 原样编译 Go</a> 中，你会从源码构建 Go toolchain，并在构建过程中探索 Go 编译器的结构！</p>
 
         </article>
 
         <nav class="exercise-nav">
             
-            <a href="index.html" class="nav-button">← Inicio</a>
+            <a href="index.html" class="nav-button">← 首页</a>
             
             
-            <a href="01-compile-go-unchanged.html" class="nav-button">Siguiente: Ejercicio 1 →</a>
+            <a href="01-compile-go-unchanged.html" class="nav-button">下一篇: 练习 1 →</a>
             
         </nav>
     </div>
@@ -153,7 +153,7 @@ cd go
     <footer>
         <div class="container">
             <p>Having fun with the Go Source Code</p>
-            <p>Creado por <strong>Jesús Espino</strong></p>
+            <p>作者 <strong>Jesús Espino</strong></p>
             <div class="footer-links">
                 <a href="https://github.com/jespino" target="_blank"><i class="fab fa-github"></i> GitHub</a>
                 <a href="https://x.com/jespinog" target="_blank"><i class="fab fa-x-twitter"></i> @jespinog</a>

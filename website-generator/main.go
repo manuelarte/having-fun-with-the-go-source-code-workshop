@@ -21,19 +21,29 @@ type Exercise struct {
 	PrevLink    string
 	NextLink    string
 	Lang        string
-	AltLangURL  string
-	AltLangName string
+	LangLinks   []LangLink
 	CSSPath     string
 	HomePath    string
+	UIHome      string
+	UIPrevious  string
+	UINext      string
+	UIExercise  string
+	UICreatedBy string
 }
 
 type IndexData struct {
-	Exercises   []Exercise
-	Lang        string
-	AltLangURL  string
-	AltLangName string
-	CSSPath     string
-	HomePath    string
+	Exercises []Exercise
+	Lang      string
+	LangLinks []LangLink
+	CSSPath   string
+	HomePath  string
+}
+
+// LangLink is one language option in the navbar switcher.
+type LangLink struct {
+	Name     string
+	URL      string
+	Selected bool
 }
 
 type exerciseMeta struct {
@@ -43,13 +53,12 @@ type exerciseMeta struct {
 }
 
 type LangConfig struct {
-	Code          string
-	FileSuffix    string // ".md" for English, ".es.md" for Spanish
-	OutputPrefix  string // "" for English, "es" for Spanish
-	AltLangPrefix string // "es" for English, "" for Spanish
-	AltLangName   string // "Español" for English, "English" for Spanish
-	Metadata      []exerciseMeta
-	UIStrings     UIStrings
+	Code         string
+	FileSuffix   string // ".md" for English, ".es.md" for Spanish, ".zh.md" for Chinese
+	OutputPrefix string // "" for English, "es" for Spanish, "zh" for Chinese
+	DisplayName  string // shown in the language switcher (e.g. "English", "Español", "中文")
+	Metadata     []exerciseMeta
+	UIStrings    UIStrings
 }
 
 type UIStrings struct {
@@ -88,11 +97,10 @@ type UIStrings struct {
 }
 
 var englishConfig = LangConfig{
-	Code:          "en",
-	FileSuffix:    ".md",
-	OutputPrefix:  "",
-	AltLangPrefix: "es",
-	AltLangName:   "Español",
+	Code:         "en",
+	FileSuffix:   ".md",
+	OutputPrefix: "",
+	DisplayName:  "English",
 	Metadata: []exerciseMeta{
 		{"00-introduction-setup", "Introduction and Setup", "Get started by cloning and setting up the Go source code environment."},
 		{"01-compile-go-unchanged", "Compiling Go Without Changes", "Learn to build the Go toolchain from source without any modifications."},
@@ -171,11 +179,10 @@ var englishConfig = LangConfig{
 }
 
 var spanishConfig = LangConfig{
-	Code:          "es",
-	FileSuffix:    ".es.md",
-	OutputPrefix:  "es",
-	AltLangPrefix: "",
-	AltLangName:   "English",
+	Code:         "es",
+	FileSuffix:   ".es.md",
+	OutputPrefix: "es",
+	DisplayName:  "Español",
 	Metadata: []exerciseMeta{
 		{"00-introduction-setup", "Introducción y Configuración", "Comienza clonando y configurando el entorno del código fuente de Go."},
 		{"01-compile-go-unchanged", "Compilando Go Sin Cambios", "Aprende a compilar el toolchain de Go desde el código fuente sin modificaciones."},
@@ -253,10 +260,132 @@ var spanishConfig = LangConfig{
 	},
 }
 
-var languages = []LangConfig{englishConfig, spanishConfig}
+var chineseConfig = LangConfig{
+	Code:         "zh",
+	FileSuffix:   ".zh.md",
+	OutputPrefix: "zh",
+	DisplayName:  "中文",
+	Metadata: []exerciseMeta{
+		{"00-introduction-setup", "简介与环境搭建", "克隆并搭建 Go 源码环境，迈出第一步。"},
+		{"01-compile-go-unchanged", "原样编译 Go", "在不做任何修改的情况下，从源码构建 Go toolchain。"},
+		{"02-scanner-arrow-operator", "为 Goroutine 增加 \"=>\" 箭头运算符", "通过添加 \"=>\" 作为启动 goroutine 的替代语法，学习修改 scanner/lexer。"},
+		{"03-parser-multiple-go", "多个 \"go\" 关键字 —— Parser 增强", "允许连续多个 \"go\" 关键字（go go go myFunction），学习修改 parser。"},
+		{"04-compiler-inlining-parameters", "Inline 参数 —— 函数内联实验", "通过调整函数 inlining 参数，观察 inliner 的行为。"},
+		{"05-gofmt-ast-transformation", "改造 gofmt —— 缩进与 AST 变换", "让 gofmt 使用 4 空格代替 tab，并加入把 \"hello\" 替换为 \"helo\" 的自定义 AST 变换。"},
+		{"06-ssa-power-of-two-detector", "SSA Pass —— 检测除以 2 的幂", "编写自定义 SSA compiler pass，识别可优化为位移的「除以 2 的幂」运算。"},
+		{"07-runtime-patient-go", "有耐心的 Go —— 等待所有 Goroutine", "修改 Go runtime，在程序退出前等待所有 goroutine 结束。"},
+		{"08-goroutine-sleep-detective", "Goroutine 睡眠侦探 —— Runtime 状态监控", "在 Go scheduler 中加入日志，观察 goroutine 进入睡眠。"},
+		{"09-predictable-select", "可预测的 Select —— 去掉随机性", "修改 select 实现，从随机变为确定性选择。"},
+		{"10-java-style-stack-traces", "Java 风格 Stack Trace —— 让 Panic 更眼熟", "把 Go 冗长的 stack trace 改成 Java 风格格式。"},
+		{"11-dnd-work-stealing", "D&D Work Stealing —— 掷骰抢 Goroutine", "在 scheduler 的 work stealing 中加入 d20 掷骰：P 必须掷出大于 10 才能偷走 goroutine。"},
+	},
+	UIStrings: UIStrings{
+		Home:            "首页",
+		Previous:        "上一篇",
+		Next:            "下一篇",
+		Exercise:        "练习",
+		HeroTitle:       "玩转 Go 源码",
+		HeroLead:        "欢迎来到动手型工作坊：你将学习如何阅读、构建并改造 Go 语言的源码。我们会带你走进编译器与 runtime，动手改一改，真正搞懂它们如何工作。",
+		HeroVersionNote: "<strong>本工作坊使用 Go 1.26.1</strong> —— 我们会 checkout 指定 release tag，保证所有练习环境一致。",
+		Prerequisites:   "前置要求",
+		PrereqItems: []string{
+			"具备 Go 编程基础",
+			"熟悉命令行工具",
+			"系统已安装 Git",
+			"<strong>Go 编译器 1.24 或更高版本</strong>（bootstrap 构建过程需要）",
+			"至少 4GB 可用磁盘空间",
+		},
+		Overview:       "工作坊概览",
+		OverviewText:   "本工作坊共 %d 个练习：从源码编译 Go 开始，再到编译器、工具链与 runtime 的各处改造。你会接触 lexer、parser，以及 runtime 行为等 Go 内部机制：",
+		GettingStarted: "开始上手",
+		GettingStartedItems: []string{
+			`从 <a href="%s00-introduction-setup.html">练习 0</a> 开始搭建环境`,
+			"建议按顺序完成练习",
+			"完成练习 1 之后，可以按兴趣挑选后续练习。",
+		},
+		Tips: "实用建议",
+		TipItems: []string{
+			"每个练习都慢慢做 —— 编译器内部并不简单！",
+			"不要只盯着题目要求，多逛逛 Go 源码",
+			"用 <code>git</code> 记录改动，搞砸了随时回退",
+			"用各种 Go 小程序充分验证你的修改",
+		},
+		Resources:         "参考资源",
+		VideoReferences:   "视频参考",
+		VideoRefsIntro:    "这些练习的思路来自我的分享：",
+		VideoCompiler:     "Understanding the Go Compiler",
+		VideoCompilerDesc: "深入 Go 的编译过程",
+		VideoRuntime:      "Understanding the Go Runtime",
+		VideoRuntimeDesc:  "探索 Go 的 runtime 系统",
+		Completion:        "完成工作坊之后",
+		CompletionIntro:   "做完所有练习，你将：",
+		CompletionItems: []string{
+			"<strong>从源码构建过 Go</strong>，并理解 bootstrap 流程",
+			"<strong>改过语言语法</strong>，通过调整 scanner 与 parser 行为",
+			"<strong>定制过开发工具</strong>，例如 gofmt 与编译器优化参数",
+			"<strong>实现过 SSA 优化</strong>，动手改 compiler backend",
+			"<strong>改过 runtime 行为</strong>，包括程序入口与 scheduler 监控",
+			"<strong>动过并发相关算法</strong>，例如 select 的随机选择",
+			"<strong>定制过错误输出</strong>，做成 Java 风格的 stack trace",
+		},
+		CompletionCongrats: "<strong>恭喜！</strong> 你已经有信心继续在 Go 源码里探险了。这些经验能帮你：",
+		CompletionEnables: []string{
+			"开始给 Go 项目提交小贡献",
+			"打造自定义语言变体与工具",
+			"理解语言与 runtime 设计里的一些取舍",
+		},
+		Contributing:     "参与贡献",
+		ContributingText: `发现问题、有改进想法，或想加新练习？欢迎 <a href="https://github.com/jespino/having-fun-with-the-go-source-code-workshop/issues">提 issue</a> 或提交 pull request！`,
+		CTAButton:        "从练习 0 开始 →",
+		FooterTitle:      "玩转 Go 源码",
+		FooterCreatedBy:  "作者 <strong>Jesús Espino</strong>",
+	},
+}
+
+var languages = []LangConfig{englishConfig, spanishConfig, chineseConfig}
 
 // exerciseMetadata is kept for backward compatibility with serve.go
 var exerciseMetadata = englishConfig.Metadata
+
+// computeLangURL builds a relative URL from fromLang's page directory to toLang's page.
+// page is the HTML filename (e.g. "index.html" or "00-introduction-setup.html").
+func computeLangURL(fromLang, toLang LangConfig, page string) string {
+	fromSub := fromLang.OutputPrefix != ""
+	toSub := toLang.OutputPrefix != ""
+
+	switch {
+	case !fromSub && !toSub:
+		return page
+	case !fromSub && toSub:
+		return toLang.OutputPrefix + "/" + page
+	case fromSub && !toSub:
+		return "../" + page
+	default:
+		return "../" + toLang.OutputPrefix + "/" + page
+	}
+}
+
+// langSwitcherLinks returns all language options for the navbar dropdown.
+// The current language is included as the selected option (empty URL so re-select is a no-op).
+func langSwitcherLinks(current LangConfig, page string) []LangLink {
+	links := make([]LangLink, 0, len(languages))
+	for _, lang := range languages {
+		if lang.Code == current.Code {
+			links = append(links, LangLink{
+				Name:     lang.DisplayName,
+				URL:      "",
+				Selected: true,
+			})
+			continue
+		}
+		links = append(links, LangLink{
+			Name:     lang.DisplayName,
+			URL:      computeLangURL(current, lang, page),
+			Selected: false,
+		})
+	}
+	return links
+}
 
 func main() {
 	exercisesDir := flag.String("exercises", "../exercises", "Path to exercises directory")
@@ -298,22 +427,12 @@ func main() {
 			cssPath = "../style.css"
 		}
 
-		// Determine the home path prefix
 		homePath := ""
-		if lang.OutputPrefix != "" {
-			homePath = ""
-		}
-
-		// Determine alt lang URL prefix
-		altLangURLPrefix := "../"
-		if lang.OutputPrefix == "" {
-			altLangURLPrefix = "es/"
-		}
 
 		// Generate exercise pages
 		exercises := make([]Exercise, 0, len(lang.Metadata))
 		for i, meta := range lang.Metadata {
-			exercise, err := generateExercisePage(*exercisesDir, langOutputDir, lang, meta, i, cssPath, homePath, altLangURLPrefix)
+			exercise, err := generateExercisePage(*exercisesDir, langOutputDir, lang, meta, i, cssPath, homePath)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Error generating exercise %s (%s): %v\n", meta.Filename, lang.Code, err)
 				os.Exit(1)
@@ -322,7 +441,7 @@ func main() {
 		}
 
 		// Generate index page
-		if err := generateIndexPage(langOutputDir, lang, exercises, cssPath, homePath, altLangURLPrefix); err != nil {
+		if err := generateIndexPage(langOutputDir, lang, exercises, cssPath, homePath); err != nil {
 			fmt.Fprintf(os.Stderr, "Error generating index page (%s): %v\n", lang.Code, err)
 			os.Exit(1)
 		}
@@ -341,7 +460,7 @@ func main() {
 	fmt.Printf("📄 Generated %d pages total (including all languages)\n", totalPages)
 }
 
-func generateExercisePage(exercisesDir, outputDir string, lang LangConfig, meta exerciseMeta, index int, cssPath, homePath, altLangURLPrefix string) (Exercise, error) {
+func generateExercisePage(exercisesDir, outputDir string, lang LangConfig, meta exerciseMeta, index int, cssPath, homePath string) (Exercise, error) {
 	// Read markdown file
 	mdFilename := meta.Filename + lang.FileSuffix
 	mdPath := filepath.Join(exercisesDir, mdFilename)
@@ -367,8 +486,14 @@ func generateExercisePage(exercisesDir, outputDir string, lang LangConfig, meta 
 		nextLink = lang.Metadata[index+1].Filename + ".html"
 	}
 
-	// Alt language URL for the same exercise
-	altLangURL := altLangURLPrefix + htmlFilename
+	// Footer "Created by" label without the author HTML
+	createdBy := "Created by"
+	switch lang.Code {
+	case "es":
+		createdBy = "Creado por"
+	case "zh":
+		createdBy = "作者"
+	}
 
 	exercise := Exercise{
 		Number:      index,
@@ -379,10 +504,14 @@ func generateExercisePage(exercisesDir, outputDir string, lang LangConfig, meta 
 		PrevLink:    prevLink,
 		NextLink:    nextLink,
 		Lang:        lang.Code,
-		AltLangURL:  altLangURL,
-		AltLangName: lang.AltLangName,
+		LangLinks:   langSwitcherLinks(lang, htmlFilename),
 		CSSPath:     cssPath,
 		HomePath:    homePath,
+		UIHome:      lang.UIStrings.Home,
+		UIPrevious:  lang.UIStrings.Previous,
+		UINext:      lang.UIStrings.Next,
+		UIExercise:  lang.UIStrings.Exercise,
+		UICreatedBy: createdBy,
 	}
 
 	// Generate HTML page
@@ -410,7 +539,7 @@ func generateExercisePage(exercisesDir, outputDir string, lang LangConfig, meta 
 	return exercise, nil
 }
 
-func generateIndexPage(outputDir string, lang LangConfig, exercises []Exercise, cssPath, homePath, altLangURLPrefix string) error {
+func generateIndexPage(outputDir string, lang LangConfig, exercises []Exercise, cssPath, homePath string) error {
 	tmpl, err := template.New("index").Funcs(template.FuncMap{
 		"safeHTML": func(s string) template.HTML {
 			return template.HTML(s)
@@ -444,19 +573,16 @@ func generateIndexPage(outputDir string, lang LangConfig, exercises []Exercise, 
 
 	data := struct {
 		IndexData
-		UI              UIStrings
-		AltLangURLIndex string
+		UI UIStrings
 	}{
 		IndexData: IndexData{
-			Exercises:   exercises,
-			Lang:        lang.Code,
-			AltLangURL:  altLangURLPrefix + "index.html",
-			AltLangName: lang.AltLangName,
-			CSSPath:     cssPath,
-			HomePath:    homePath,
+			Exercises: exercises,
+			Lang:      lang.Code,
+			LangLinks: langSwitcherLinks(lang, "index.html"),
+			CSSPath:   cssPath,
+			HomePath:  homePath,
 		},
-		UI:              ui,
-		AltLangURLIndex: altLangURLPrefix + "index.html",
+		UI: ui,
 	}
 	if err := tmpl.Execute(f, data); err != nil {
 		return fmt.Errorf("executing template: %w", err)
@@ -510,8 +636,8 @@ func fixRelativeLinks(html string) string {
 		return match
 	})
 
-	// Fix links that are already in the format XX-name.md or XX-name.es.md
-	re = regexp.MustCompile(`href="(?:\./)?([0-9]{2}-[^"]+?)(?:\.es)?\.md"`)
+	// Fix links that are already in the format XX-name.md, XX-name.es.md, or XX-name.zh.md
+	re = regexp.MustCompile(`href="(?:\./)?([0-9]{2}-[^"]+?)(?:\.(?:es|zh))?\.md"`)
 	html = re.ReplaceAllString(html, `href="$1.html"`)
 
 	return html
@@ -522,7 +648,7 @@ const exerciseTemplate = `<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Exercise {{.Number}}: {{.Title}} - Go Source Code Workshop</title>
+    <title>{{.UIExercise}} {{.Number}}: {{.Title}} - Go Source Code Workshop</title>
     <link rel="stylesheet" href="{{.CSSPath}}">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
@@ -565,8 +691,13 @@ const exerciseTemplate = `<!DOCTYPE html>
         <div class="container">
             <a href="{{.HomePath}}index.html" class="nav-home">Having fun with the Go Source Code</a>
             <div class="nav-links">
-                <a href="{{.HomePath}}index.html">{{if eq .Lang "es"}}Inicio{{else}}Home{{end}}</a>
-                <a href="{{.AltLangURL}}" class="lang-switch"><i class="fas fa-globe"></i> {{.AltLangName}}</a>
+                <a href="{{.HomePath}}index.html">{{.UIHome}}</a>
+                <label class="lang-switch">
+                    <i class="fas fa-globe" aria-hidden="true"></i>
+                    <select onchange="if (this.value) location.href = this.value" aria-label="Language">
+                        {{range .LangLinks}}<option value="{{.URL}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}
+                    </select>
+                </label>
                 <a href="https://github.com/jespino/having-fun-with-the-go-source-code-workshop" target="_blank"><i class="fab fa-github"></i> Repository</a>
             </div>
         </div>
@@ -579,10 +710,10 @@ const exerciseTemplate = `<!DOCTYPE html>
 
         <nav class="exercise-nav">
             {{if .PrevLink}}
-            <a href="{{.PrevLink}}" class="nav-button">{{ if eq .PrevLink "index.html" }}{{if eq .Lang "es"}}← Inicio{{else}}← Home{{end}}{{ else }}{{if eq .Lang "es"}}← Anterior{{else}}← Previous{{end}}{{ end }}</a>
+            <a href="{{.PrevLink}}" class="nav-button">{{ if or (eq .PrevLink "index.html") (eq .PrevLink "") }}← {{.UIHome}}{{ else }}← {{.UIPrevious}}{{ end }}</a>
             {{end}}
             {{if .NextLink}}
-            <a href="{{.NextLink}}" class="nav-button">{{if eq .Lang "es"}}Siguiente{{else}}Next{{end}}: {{if eq .Lang "es"}}Ejercicio{{else}}Exercise{{end}} {{add .Number 1}} →</a>
+            <a href="{{.NextLink}}" class="nav-button">{{.UINext}}: {{.UIExercise}} {{add .Number 1}} →</a>
             {{end}}
         </nav>
     </div>
@@ -590,7 +721,7 @@ const exerciseTemplate = `<!DOCTYPE html>
     <footer>
         <div class="container">
             <p>Having fun with the Go Source Code</p>
-            <p>{{if eq .Lang "es"}}Creado por{{else}}Created by{{end}} <strong>Jesús Espino</strong></p>
+            <p>{{.UICreatedBy}} <strong>Jesús Espino</strong></p>
             <div class="footer-links">
                 <a href="https://github.com/jespino" target="_blank"><i class="fab fa-github"></i> GitHub</a>
                 <a href="https://x.com/jespinog" target="_blank"><i class="fab fa-x-twitter"></i> @jespinog</a>
@@ -651,7 +782,12 @@ const indexTemplate = `<!DOCTYPE html>
             <a href="{{.HomePath}}index.html" class="nav-home">Having fun with the Go Source Code</a>
             <div class="nav-links">
                 <a href="{{.HomePath}}index.html">{{.UI.Home}}</a>
-                <a href="{{.AltLangURL}}" class="lang-switch"><i class="fas fa-globe"></i> {{.AltLangName}}</a>
+                <label class="lang-switch">
+                    <i class="fas fa-globe" aria-hidden="true"></i>
+                    <select onchange="if (this.value) location.href = this.value" aria-label="Language">
+                        {{range .LangLinks}}<option value="{{.URL}}"{{if .Selected}} selected{{end}}>{{.Name}}</option>{{end}}
+                    </select>
+                </label>
                 <a href="https://github.com/jespino/having-fun-with-the-go-source-code-workshop" target="_blank"><i class="fab fa-github"></i> Repository</a>
             </div>
         </div>
@@ -680,7 +816,7 @@ const indexTemplate = `<!DOCTYPE html>
                 {{range .Exercises}}
                 <a href="{{.Filename}}" class="exercise-card-link">
                     <div class="exercise-card">
-                        <div class="exercise-number">{{if eq .Lang "es"}}Ejercicio{{else}}Exercise{{end}} {{.Number}}</div>
+                        <div class="exercise-number">{{$.UI.Exercise}} {{.Number}}</div>
                         <h3>{{.Title}}</h3>
                         <p>{{.Description}}</p>
                     </div>

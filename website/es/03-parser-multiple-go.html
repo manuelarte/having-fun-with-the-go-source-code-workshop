@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Exercise 3: Múltiples Keywords &#34;go&#34; - Mejora del Parser - Go Source Code Workshop</title>
+    <title>Ejercicio 3: Múltiples Keywords &#34;go&#34; - Mejora del Parser - Go Source Code Workshop</title>
     <link rel="stylesheet" href="../style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
@@ -47,7 +47,12 @@
             <a href="index.html" class="nav-home">Having fun with the Go Source Code</a>
             <div class="nav-links">
                 <a href="index.html">Inicio</a>
-                <a href="../03-parser-multiple-go.html" class="lang-switch"><i class="fas fa-globe"></i> English</a>
+                <label class="lang-switch">
+                    <i class="fas fa-globe" aria-hidden="true"></i>
+                    <select onchange="if (this.value) location.href = this.value" aria-label="Language">
+                        <option value="../03-parser-multiple-go.html">English</option><option value="" selected>Español</option><option value="../zh/03-parser-multiple-go.html">中文</option>
+                    </select>
+                </label>
                 <a href="https://github.com/jespino/having-fun-with-the-go-source-code-workshop" target="_blank"><i class="fab fa-github"></i> Repository</a>
             </div>
         </div>

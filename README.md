@@ -4,6 +4,12 @@ Welcome to an interactive workshop where you'll learn how to modify and experime
 
 **This workshop uses Go version 1.26.1** - we'll check out the specific release tag to ensure consistency across all exercises.
 
+## Languages / 语言
+
+- English: [README.md](./README.md) · exercises as `*.md`
+- Español: exercises as `*.es.md`
+- 中文: [README.zh.md](./README.zh.md) · exercises as `*.zh.md`
+
 ## Prerequisites
 
 - Basic knowledge of Go programming

@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>练习 7: 有耐心的 Go —— 等待所有 Goroutine - Go Source Code Workshop</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            hljs.highlightAll();
+
+            
+            document.querySelectorAll('pre').forEach(function(pre) {
+                const button = document.createElement('button');
+                button.className = 'copy-button';
+                button.innerHTML = '<i class="far fa-copy"></i>';
+                button.title = 'Copy to clipboard';
+
+                button.addEventListener('click', function() {
+                    const code = pre.querySelector('code');
+                    const text = code.textContent;
+
+                    navigator.clipboard.writeText(text).then(function() {
+                        button.innerHTML = '<i class="fas fa-check"></i>';
+                        button.classList.add('copied');
+                        setTimeout(function() {
+                            button.innerHTML = '<i class="far fa-copy"></i>';
+                            button.classList.remove('copied');
+                        }, 2000);
+                    }).catch(function(err) {
+                        console.error('Failed to copy:', err);
+                    });
+                });
+
+                pre.appendChild(button);
+            });
+        });
+    </script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <a href="index.html" class="nav-home">Having fun with the Go Source Code</a>
+            <div class="nav-links">
+                <a href="index.html">首页</a>
+                <label class="lang-switch">
+                    <i class="fas fa-globe" aria-hidden="true"></i>
+                    <select onchange="if (this.value) location.href = this.value" aria-label="Language">
+                        <option value="../07-runtime-patient-go.html">English</option><option value="../es/07-runtime-patient-go.html">Español</option><option value="" selected>中文</option>
+                    </select>
+                </label>
+                <a href="https://github.com/jespino/having-fun-with-the-go-source-code-workshop" target="_blank"><i class="fab fa-github"></i> Repository</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <article class="exercise-content">
+            <h1>练习 7: Patient Go - 让 Go 等待所有 Goroutine</h1>
+
+<blockquote>
+<p>📖 <strong>想深入了解？</strong> 阅读 Internals for Interns 上的 <a href="https://internals-for-interns.com/posts/understanding-go-runtime/">The Bootstrap</a> 和 <a href="https://internals-for-interns.com/posts/go-runtime-scheduler/">The Scheduler</a>，深入理解 Go runtime 启动与 goroutine 调度。</p>
+</blockquote>
+
+<p>本练习中，你将修改 Go runtime，让程序在退出前等待所有 goroutine 结束。目前当 <code>main()</code> 返回时，即使还有 goroutine 在跑，Go 也会立刻终止。我们要让 Go 更「有耐心」，等所有 goroutine 完成再退出。</p>
+
+<h2>学习目标</h2>
+
+<p>完成本练习后，你将能够：</p>
+
+<ul>
+<li>理解 Go 程序的终止流程</li>
+<li>知道如何统计活跃 goroutine 数量</li>
+<li>修改 runtime 的 main 函数以改变程序行为</li>
+<li>理解「自动等待 goroutine」带来的取舍</li>
+</ul>
+
+<h2>引言：Go 程序是如何启动的？</h2>
+
+<p>Go 二进制并不是从你的 <code>main()</code> 开始跑的。操作系统会先执行架构相关的汇编入口（如 <code>_rt0_amd64_linux</code>），搭建最基础的 runtime 基础设施。这个 bootstrap 过程会初始化 Go runtime 管理执行所用的三个核心抽象：</p>
+
+<ul>
+<li><strong>G (Goroutine)</strong>：轻量级执行单元，自带栈（初始约 2KB）。每条 <code>go</code> 语句都会创建一个新的 G。</li>
+<li><strong>M (Machine)</strong>：真正执行 goroutine 的 OS 线程。每个 M 都有一个特殊的 <code>g0</code> goroutine，用于 runtime 管理任务。</li>
+<li><strong>P (Processor)</strong>：把 goroutine 接到线程上的逻辑调度上下文。每个 P 有自己的可运行 goroutine 队列和内存缓存。P 的数量由 <code>GOMAXPROCS</code> 控制。</li>
+</ul>
+
+<p>Bootstrap 大致顺序是：汇编初始化 → scheduler 初始化（栈池、内存分配器、垃圾回收器）→ <code>runtime.main()</code> → 启动系统监控线程 → 启用 GC → 运行各 package 的 <code>init()</code> → 最后调用你的 <code>main.main()</code>。</p>
+
+<p>当你的 <code>main()</code> 返回后，控制权回到 <code>runtime.main()</code>，继续做 tear-down。这正是我们要动手改的地方。</p>
+
+<h2>背景：Go 当前的终止行为</h2>
+
+<p>目前如果你这样写：</p>
+
+<pre><code class="language-go">package main
+
+import &quot;time&quot;
+
+func main() {
+    go func() {
+        time.Sleep(2 * time.Second)
+        println(&quot;Goroutine finished!&quot;)
+    }()
+    println(&quot;Main finished!&quot;)
+    // Program exits immediately, goroutine never completes
+}
+</code></pre>
+
+<p><strong>输出：</strong></p>
+
+<pre><code>Main finished!
+</code></pre>
+
+<p>因为 <code>main()</code> 一返回程序就退出了，goroutine 根本来不及打印。</p>
+
+<p>我们要改成：Go 会耐心等所有 goroutine 跑完：</p>
+
+<p><strong>新的输出：</strong></p>
+
+<pre><code>Main finished!
+Goroutine finished!
+</code></pre>
+
+<h2>第 1 步：理解 Runtime 的 Main 函数</h2>
+
+<p>Go runtime 在 <code>runtime/proc.go</code> 里的 <code>main()</code> 负责调用你程序的 <code>main()</code>。先看看它是怎么串起来的：</p>
+
+<pre><code class="language-bash">cd go/src/runtime
+</code></pre>
+
+<p>打开 <code>proc.go</code>，找到 <code>main()</code> 函数。靠近开头（大约第 136–137 行），可以看到 runtime 如何链接到你程序的 main：</p>
+
+<pre><code class="language-go">//go:linkname main_main main.main
+func main_main()
+</code></pre>
+
+<p>这个 <code>//go:linkname</code> 指令告诉链接器：把 runtime 的 <code>main_main</code> 连到你程序的 <code>main.main</code>。这样 runtime 才能调用 main package 里的代码。</p>
+
+<p>再往下看同一个 <code>main()</code> 函数（大约第 289 行），会看到真正调用的地方：</p>
+
+<pre><code class="language-go">fn := main_main // make an indirect call, as the linker doesn't know the address of the main package when laying down the runtime
+fn()
+
+... // tear-down process continues
+</code></pre>
+
+<p><strong>执行流程：</strong></p>
+
+<ol>
+<li>Go runtime 完成 bootstrap</li>
+<li>runtime 的 <code>main()</code> 先跑起来</li>
+<li>再做一些 bootstrap 收尾</li>
+<li>调用 <code>main_main</code>（通过 linkname 映射到你程序的 <code>main()</code>）</li>
+<li>你的 <code>main()</code> 执行——<strong>责任交到你的代码手里</strong></li>
+<li>你的 <code>main()</code> 返回后，控制权回到 runtime 的 <code>main()</code></li>
+<li>runtime 继续做程序的 <strong>tear-down</strong>（清理并退出）</li>
+</ol>
+
+<p>目前 tear-down 会在你的 <code>main()</code> 返回后立刻开始，不会等其他 goroutine。</p>
+
+<h2>第 2 步：加入等待 Goroutine 的逻辑</h2>
+
+<p>我们要加一段逻辑：一直等到只剩 1 个 goroutine（也就是 main goroutine 自己）。</p>
+
+<p><strong>编辑 <code>runtime/proc.go</code>：</strong></p>
+
+<p>找到大约第 289–290 行调用 <code>main_main</code> 的位置：</p>
+
+<pre><code class="language-go">fn := main_main // make an indirect call, as the linker doesn't know the address of the main package when laying down the runtime
+fn()
+</code></pre>
+
+<p>在 <code>fn()</code> 调用之后立刻加上等待逻辑：</p>
+
+<pre><code class="language-go">fn := main_main // make an indirect call, as the linker doesn't know the address of the main package when laying down the runtime
+fn()
+
+// Wait until only 1 goroutine is running (the main goroutine)
+for gcount(false) &gt; 1 {
+	Gosched()
+}
+</code></pre>
+
+<h3>理解这段代码</h3>
+
+<ul>
+<li><strong><code>gcount(false)</code></strong> - runtime 函数，返回活跃 goroutine 数量（<code>false</code> 表示不把系统 goroutine 算进去）</li>
+<li><strong><code>gcount(false) &gt; 1</code></strong> - 只要还有比 main 更多的 goroutine 在跑</li>
+<li><strong><code>Gosched()</code></strong> - 让出处理器，让其他 goroutine 有机会运行</li>
+<li><strong>循环结束条件</strong> - 只剩 main goroutine 时（count = 1）</li>
+</ul>
+
+<h2>第 3 步：重新构建 Go Toolchain</h2>
+
+<pre><code class="language-bash">cd go/src
+./make.bash
+</code></pre>
+
+<p>这会用你「耐心等待」的逻辑重新构建 runtime。</p>
+
+<h2>第 4 步：测试基础的 Goroutine 等待</h2>
+
+<p>创建一个测试文件验证行为：</p>
+
+<p>创建 <code>patient_demo.go</code>：</p>
+
+<pre><code class="language-go">package main
+
+import &quot;time&quot;
+
+func main() {
+	println(&quot;Main starting...&quot;)
+
+	go func() {
+		time.Sleep(1 * time.Second)
+		println(&quot;Goroutine 1 finished!&quot;)
+	}()
+
+	go func() {
+		time.Sleep(2 * time.Second)
+		println(&quot;Goroutine 2 finished!&quot;)
+	}()
+
+	println(&quot;Main finished, but Go will wait...&quot;)
+}
+</code></pre>
+
+<p>用你改过的 Go 运行：</p>
+
+<pre><code class="language-bash">./bin/go run patient_demo.go
+</code></pre>
+
+<p><strong>期望输出：</strong></p>
+
+<pre><code>Main starting...
+Main finished, but Go will wait...
+Goroutine 1 finished!
+Goroutine 2 finished!
+</code></pre>
+
+<p>成功！Go 现在会等所有 goroutine 完成。</p>
+
+<h2>我们学到了什么</h2>
+
+<ul>
+<li><strong>程序终止</strong>：Go 程序如何退出与清理</li>
+<li><strong>Goroutine 追踪</strong>：<code>gcount()</code> 如何统计活跃 goroutine</li>
+<li><strong>协作式调度</strong>：<code>Gosched()</code> 如何让出执行权给其他 goroutine</li>
+<li><strong>Runtime 修改</strong>：一个小改动如何影响所有 Go 程序</li>
+<li><strong>设计取舍</strong>：自动等待的好处与坏处</li>
+</ul>
+
+<h2>扩展想法</h2>
+
+<p>可以继续尝试：</p>
+
+<ol>
+<li>加超时：最多等 goroutine 10 秒</li>
+<li>加日志：开始等待时打印，以及还剩哪些 goroutine</li>
+<li>做成可配置：用环境变量开关</li>
+<li>加告警：检测 goroutine 里是否卡死/死循环</li>
+</ol>
+
+<h2>清理</h2>
+
+<p>恢复标准 Go 行为：</p>
+
+<pre><code class="language-bash">cd go/src/runtime
+git checkout proc.go
+cd ..
+./make.bash
+</code></pre>
+
+<h2>总结</h2>
+
+<p>你已经成功修改了 Go runtime，让它「有耐心」，会等待所有 goroutine！</p>
+
+<pre><code>Before:  main() returns → immediate exit → goroutines abandoned
+After:   main() returns → wait for goroutines → all complete → exit
+
+Changes: runtime/proc.go main() function
+Result:  No goroutine left behind!
+</code></pre>
+
+<p>这次修改展示了：</p>
+
+<ul>
+<li>对 Go runtime 的深入理解</li>
+<li>程序终止如何工作</li>
+<li><code>main()</code> 与 goroutine 的关系</li>
+<li>语言设计里真实的取舍</li>
+</ul>
+
+<p>现在你的 Go 变得很有耐心。</p>
+
+<hr />
+
+<p><em>继续 <a href="08-goroutine-sleep-detective.html">练习 8</a>，或返回 <a href="index.html">workshop 主页</a></em></p>
+
+        </article>
+
+        <nav class="exercise-nav">
+            
+            <a href="06-ssa-power-of-two-detector.html" class="nav-button">← 上一篇</a>
+            
+            
+            <a href="08-goroutine-sleep-detective.html" class="nav-button">下一篇: 练习 8 →</a>
+            
+        </nav>
+    </div>
+
+    <footer>
+        <div class="container">
+            <p>Having fun with the Go Source Code</p>
+            <p>作者 <strong>Jesús Espino</strong></p>
+            <div class="footer-links">
+                <a href="https://github.com/jespino" target="_blank"><i class="fab fa-github"></i> GitHub</a>
+                <a href="https://x.com/jespinog" target="_blank"><i class="fab fa-x-twitter"></i> @jespinog</a>
+                <a href="https://linkedin.com/in/jesus-espino" target="_blank"><i class="fab fa-linkedin"></i> LinkedIn</a>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

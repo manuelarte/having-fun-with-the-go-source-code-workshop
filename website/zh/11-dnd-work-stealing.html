@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>练习 11: D&amp;D Work Stealing —— 掷骰抢 Goroutine - Go Source Code Workshop</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            hljs.highlightAll();
+
+            
+            document.querySelectorAll('pre').forEach(function(pre) {
+                const button = document.createElement('button');
+                button.className = 'copy-button';
+                button.innerHTML = '<i class="far fa-copy"></i>';
+                button.title = 'Copy to clipboard';
+
+                button.addEventListener('click', function() {
+                    const code = pre.querySelector('code');
+                    const text = code.textContent;
+
+                    navigator.clipboard.writeText(text).then(function() {
+                        button.innerHTML = '<i class="fas fa-check"></i>';
+                        button.classList.add('copied');
+                        setTimeout(function() {
+                            button.innerHTML = '<i class="far fa-copy"></i>';
+                            button.classList.remove('copied');
+                        }, 2000);
+                    }).catch(function(err) {
+                        console.error('Failed to copy:', err);
+                    });
+                });
+
+                pre.appendChild(button);
+            });
+        });
+    </script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <a href="index.html" class="nav-home">Having fun with the Go Source Code</a>
+            <div class="nav-links">
+                <a href="index.html">首页</a>
+                <label class="lang-switch">
+                    <i class="fas fa-globe" aria-hidden="true"></i>
+                    <select onchange="if (this.value) location.href = this.value" aria-label="Language">
+                        <option value="../11-dnd-work-stealing.html">English</option><option value="../es/11-dnd-work-stealing.html">Español</option><option value="" selected>中文</option>
+                    </select>
+                </label>
+                <a href="https://github.com/jespino/having-fun-with-the-go-source-code-workshop" target="_blank"><i class="fab fa-github"></i> Repository</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <article class="exercise-content">
+            <h1>练习 11: D&amp;D Work Stealing —— 掷骰子抢 Goroutine</h1>
+
+<blockquote>
+<p><strong>想深入了解？</strong> 阅读 Internals for Interns 上的 <a href="https://internals-for-interns.com/posts/go-runtime-scheduler/">The Scheduler</a>，深入了解 Go 的 runtime 与 goroutine 调度。</p>
+</blockquote>
+
+<p>在本练习中，你会在 Go scheduler 的 work stealing 算法里加上一次 d20 掷骰。当某个 processor（P）想从另一个 P 的 run queue 里偷 goroutine 时，必须先在二十面骰上掷出大于 10 的点数。掷失败就偷不成——这样既能看见 work 是怎么被分走的，也挺好玩。</p>
+
+<h2>学习目标</h2>
+
+<p>完成本练习后，你将能够：</p>
+
+<ul>
+<li>理解 Go 的 work stealing scheduler 如何在各个 processor 之间分发 goroutine</li>
+<li>知道 <code>stealWork</code> 函数在哪里，以及它如何遍历其他 P</li>
+<li>改造 steal 逻辑，加上一层随机门槛</li>
+<li>实时观察 work stealing 的尝试过程</li>
+</ul>
+
+<h2>背景：Work Stealing</h2>
+
+<p>Go 的 scheduler 用 work stealing 在各个 processor 之间平衡负载。当某个 P 没有可执行的 goroutine 时，它会查看其他 P 的队列，并偷走对方大约一半的工作：</p>
+
+<pre><code>Before (current behavior):
+  P0: [g1, g2, g3, g4]    P1: []  (idle)
+  P1 tries to steal from P0 → always succeeds
+  P0: [g1, g2]             P1: [g3, g4]
+
+After (our modification):
+  P0: [g1, g2, g3, g4]    P1: []  (idle)
+  P1 rolls d20 to steal from P0 → rolled 7, failed!
+  P1 rolls d20 to steal from P0 → rolled 16, stole!
+  P0: [g1, g2]             P1: [g3, g4]
+</code></pre>
+
+<h2>第 1 步：理解 Steal 机制</h2>
+
+<p>work stealing 逻辑在 <code>proc.go</code> 的 <code>stealWork</code> 函数里：</p>
+
+<pre><code class="language-bash">cd go/src/runtime
+grep -n &quot;func stealWork&quot; proc.go
+</code></pre>
+
+<p>你会在大约第 3828 行找到 <code>stealWork</code>。当某个 P 本地没有工作可做时，<code>findRunnable</code> 会调用它。它会按随机顺序遍历其他 P，尝试从它们的 run queue 里偷 goroutine。</p>
+
+<h2>第 2 步：找到真正发起 Steal 的位置</h2>
+
+<p>在 <code>stealWork</code> 内部，真正尝试 steal 的代码大约在第 3883 行：</p>
+
+<pre><code class="language-bash">grep -n &quot;runqsteal&quot; proc.go | head -5
+</code></pre>
+
+<p>你会看到类似这样的代码块（大约第 3883–3887 行）：</p>
+
+<pre><code class="language-go">// go/src/runtime/proc.go:3883-3887
+// Don't bother to attempt to steal if p2 is idle.
+if !idlepMask.read(enum.position()) {
+    if gp := runqsteal(pp, p2, stealTimersOrRunNextG); gp != nil {
+        return gp, false, now, pollUntil, ranTimer
+    }
+}
+</code></pre>
+
+<p>此处的关键变量：
+- <strong><code>pp</code></strong> —— 当前 P（小偷），类型 <code>*p</code>，有字段 <code>pp.id</code>（int32）
+- <strong><code>p2</code></strong> —— 目标 P（受害者），类型 <code>*p</code>，有字段 <code>p2.id</code>
+- <strong><code>runqsteal(pp, p2, ...)</code></strong> —— 把 goroutine 从 p2 的队列挪到 pp 的队列</p>
+
+<h2>第 3 步：加上 D&amp;D 掷骰</h2>
+
+<p>把第 3883–3887 行替换成我们带骰子门槛的版本：</p>
+
+<pre><code class="language-go">// go/src/runtime/proc.go:3883-3887
+// Don't bother to attempt to steal if p2 is idle.
+if !idlepMask.read(enum.position()) {
+    if mainStarted &amp;&amp; gogetenv(&quot;GODND&quot;) != &quot;&quot; {
+        // D&amp;D Work Stealing: Roll a d20 to attempt stealing!
+        roll := cheaprandn(20) + 1 // Roll 1-20
+        if roll &gt; 10 {
+            if gp := runqsteal(pp, p2, stealTimersOrRunNextG); gp != nil {
+                println(&quot;🎲 [P&quot;, pp.id, &quot;] Rolling to steal from P&quot;, p2.id, &quot;... rolled&quot;, roll, &quot;. Stole!&quot;)
+                return gp, false, now, pollUntil, ranTimer
+            }
+        } else {
+            println(&quot;🎲 [P&quot;, pp.id, &quot;] Rolling to steal from P&quot;, p2.id, &quot;... rolled&quot;, roll, &quot;. Failed!&quot;)
+        }
+    } else {
+        if gp := runqsteal(pp, p2, stealTimersOrRunNextG); gp != nil {
+            return gp, false, now, pollUntil, ranTimer
+        }
+    }
+}
+</code></pre>
+
+<h3>理解这段代码</h3>
+
+<ul>
+<li><strong><code>mainStarted</code></strong> —— <code>proc.go</code> 里已有的布尔值，会在 main goroutine 启动早期（<code>sysmon</code>、GC 和 <code>init()</code> 运行之前）置为 <code>true</code>。它能滤掉最早期的一部分 scheduler 噪音，但 main 之前仍可能有一些打印（见下方说明）</li>
+<li><strong><code>gogetenv(&quot;GODND&quot;)</code></strong> —— runtime 内部的环境变量读取函数（相当于 <code>os.Getenv</code>——runtime 不能 import <code>os</code>）。所有改动都挂在 <code>GODND=1</code> 后面，不主动开启时 scheduler 行为保持正常</li>
+<li><strong><code>cheaprandn(20) + 1</code></strong> —— 掷出 1–20。<code>cheaprandn(20)</code> 返回 0–19，<code>+ 1</code> 把它调成标准 d20 范围</li>
+<li><strong><code>roll &gt; 10</code></strong> —— 约 50% 成功率（11–20 成功，1–10 失败）</li>
+<li><strong><code>println(...)</code></strong> —— runtime 内置打印，经原始 syscall 写到 stderr，无需任何 import</li>
+<li><strong><code>pp.id</code> / <code>p2.id</code></strong> —— processor 的 ID 字段（int32），定义在 <code>runtime2.go</code> 的 <code>p</code> 结构体里</li>
+<li>只有当 <code>runqsteal</code> 返回非 nil 时我们才打印 &ldquo;Stole!&ldquo;（目标队列可能在 idle 检查与真正 steal 之间已经空了）</li>
+</ul>
+
+<blockquote>
+<p><strong>🐉 冷知识：scheduler 其实已经在“带优势掷骰”——而且还是四次！</strong></p>
+
+<p>看看 <code>stealWork</code> 的外层循环：<code>const stealTries = 4</code>。scheduler 不是只偷一次——它会对所有 P <strong>循环 4 遍</strong>，每一遍都用 <code>cheaprand()</code> 重新打乱顺序。所以你的 d20 门槛不是每个 steal 尝试只掷一次——一个死磕的 P 对每个目标最多能有 4 次机会。用 D&amp;D 的话说，这相当于优势……再平方。</p>
+
+<p>而且第 4 遍很特别：它会把 <code>stealTimersOrRunNextG = true</code>，从而允许偷走受害者的 <code>runnext</code> goroutine——也就是对方马上要跑的那一个。源码注释里原话是 <em>&ldquo;stealing from the other P&rsquo;s runnext should be the last resort.&rdquo;</em> 所以最后一轮是撕破脸的全力回合，什么都可以抢。</p>
+
+<p>其实 Go scheduler 在你动手之前就已经在玩 D&amp;D 了。你只是把骰子结果打出来而已。</p>
+</blockquote>
+
+<h2>第 4 步：重新编译 Go Toolchain</h2>
+
+<pre><code class="language-bash">cd ../  # back to go/src
+./make.bash
+</code></pre>
+
+<h2>第 5 步：测试 D&amp;D Scheduler</h2>
+
+<p>创建 <code>dnd_steal_demo.go</code> 文件：</p>
+
+<pre><code class="language-bash"># Create the file
+touch /tmp/dnd_steal_demo.go
+</code></pre>
+
+<pre><code class="language-go">package main
+
+import (
+    &quot;runtime&quot;
+    &quot;sync&quot;
+)
+
+func busyWork(id int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    sum := 0
+    for i := 0; i &lt; 1_000_000; i++ {
+        sum += i
+    }
+    println(&quot;Goroutine&quot;, id, &quot;finished&quot;)
+}
+
+func main() {
+    runtime.GOMAXPROCS(4) // 4 P's for visible stealing
+    println(&quot;=== D&amp;D Work Stealing Demo ===&quot;)
+    println()
+
+    var wg sync.WaitGroup
+    for i := 1; i &lt;= 20; i++ {
+        wg.Add(1)
+        go busyWork(i, &amp;wg)
+    }
+    wg.Wait()
+    println()
+    println(&quot;=== All goroutines completed! ===&quot;)
+}
+</code></pre>
+
+<p>先编译再带 D&amp;D 模式运行：</p>
+
+<pre><code class="language-bash">../go/bin/go build -o dnd_steal_demo /tmp/dnd_steal_demo.go
+GODND=1 ./dnd_steal_demo
+</code></pre>
+
+<p><strong>为什么要 <code>GODND=1</code>？</strong> 不加的话，scheduler 按正常路径跑——不掷骰、不打印。这样 <code>./make.bash</code> 和 <code>go build</code> 才会干净安静。注意：即使设了 <code>GODND=1</code>，main 前后仍可能有一些打印——原因见下方说明。</p>
+
+<p><strong>为什么先 build 再 run？</strong> <code>go build</code> 本身也会用你改过的 Go。分开编译（不带 <code>GODND=1</code>）可以让编译器自己的 work stealing 保持安静。</p>
+
+<p>预期输出（每次运行都会不同）：</p>
+
+<pre><code>🎲 [P 3 ] Rolling to steal from P 0 ... rolled 13 . Stole!
+=== D&amp;D Work Stealing Demo ===
+
+🎲 [P 2 ] Rolling to steal from P 0 ... rolled 15 . Stole!
+🎲 [P 3 ] Rolling to steal from P 0 ... rolled 12 . Stole!
+🎲 [P 1 ] Rolling to steal from P 0 ... rolled 11 . Stole!
+Goroutine 15 finished
+🎲 [P 0 ] Rolling to steal from P 2 ... rolled 7 . Failed!
+🎲 [P 0 ] Rolling to steal from P 3 ... rolled 20 . Stole!
+Goroutine 1 finished
+Goroutine 12 finished
+...
+=== All goroutines completed! ===
+🎲 [P %
+</code></pre>
+
+<p>你会看到骰子结果和 goroutine 完成消息交织在一起。掷出 1–10 失败，11–20 成功。注意：没活干的 P 会不停换目标重试，直到掷出足够高的点数！</p>
+
+<blockquote>
+<p><strong>📖 为什么在 <code>=== D&amp;D Work Stealing Demo ===</code> 之前就有骰子输出？</strong></p>
+
+<p>那些不是你写的——是 Go runtime 干的。从 <code>mainStarted</code> 变成 <code>true</code> 到你第一次 <code>println</code> 之间，runtime 会启动 <code>sysmon</code>、启用 GC，并跑完所有 <code>init()</code>——每一步都会创建 goroutine，空闲的 P 立刻就想偷。你已经给 scheduler 本身打了桩，所以现在能看见那些一直存在、只是以前静默的活动。</p>
+
+<p><strong>📖 为什么在 <code>=== All goroutines completed! ===</code> 之后会出现截断的 <code>🎲 [P %</code>？</strong></p>
+
+<p>故事的另一头。<code>wg.Wait()</code> 返回后，空闲的 P 还在 <code>stealWork</code> 里空转找活。有个 P 刚开始 <code>println</code>，<code>main()</code> 就返回了、进程退出——打印没写完。末尾的 <code>%</code> 是 shell 在告诉你：输出没有以换行结尾。scheduler 在你离开时也不会停下来等你。</p>
+
+<p>欢迎来到 Go 的内部世界！</p>
+</blockquote>
+
+<h2>理解我们做了什么</h2>
+
+<ol>
+<li><strong>找到了 Steal 逻辑</strong>：定位到 <code>proc.go</code> 里 P 互相偷 goroutine 的 <code>stealWork</code></li>
+<li><strong>加了骰子门槛</strong>：用 <code>cheaprandn(20) + 1</code> 在每次 steal 尝试前生成 d20（1–20）</li>
+<li><strong>记录了掷骰结果</strong>：用 <code>println()</code> 打印哪个 P 在偷谁、掷了多少、是否成功</li>
+<li><strong>观察到了效果</strong>：实时看到 work stealing 尝试，有些因点数太低而失败</li>
+</ol>
+
+<h2>我们学到了什么</h2>
+
+<ul>
+<li><strong>Work Stealing</strong>：当队列不平衡时，Go 如何把 goroutine 分发到各个 processor</li>
+<li><strong><code>stealWork</code> 函数</strong>：遍历各个 P、寻找可偷工作的核心循环</li>
+<li><strong><code>cheaprandn</code></strong>：runtime 的快速伪随机数生成器，scheduler 里到处在用</li>
+<li><strong>Scheduler 可观测性</strong>：如何给 scheduler 加日志，又不破坏其行为</li>
+<li><strong>P 的身份</strong>：每个 processor 都有唯一的 <code>id</code> 字段，用于调度决策</li>
+</ul>
+
+<h2>扩展想法</h2>
+
+<ol>
+<li>让难度可配置：必须掷过 15 而不是 10（更难偷）</li>
+<li>掷出 natural 20 时来一次 &ldquo;critical hit&rdquo;：偷走目标全部 goroutine，而不只是一半</li>
+<li>掷出 natural 1 时来一次 &ldquo;fumble&rdquo;：偷取方用 <code>Gosched()</code> 让出一轮</li>
+<li>在程序退出时统计并打印总掷骰次数、成功次数、失败次数</li>
+</ol>
+
+<h2>清理</h2>
+
+<p>要去掉骰子逻辑：</p>
+
+<pre><code class="language-bash">cd go/src/runtime
+git checkout proc.go
+cd ../
+./make.bash
+</code></pre>
+
+<h2>总结</h2>
+
+<p>你已经把 Go 的 work stealing scheduler 变成了一场桌面 RPG 遭遇战：</p>
+
+<pre><code>Before:  P tries to steal -&gt; always succeeds if target has work
+After:   P tries to steal -&gt; must roll &gt; 10 on a d20 first
+
+Changes: runtime/proc.go stealWork() function (~14 lines)
+Result:  The scheduler now plays D&amp;D!
+</code></pre>
+
+<hr />
+
+<p><em>恭喜完成全部工作坊练习！返回 <a href="index.html">工作坊主页</a></em></p>
+
+        </article>
+
+        <nav class="exercise-nav">
+            
+            <a href="10-java-style-stack-traces.html" class="nav-button">← 上一篇</a>
+            
+            
+        </nav>
+    </div>
+
+    <footer>
+        <div class="container">
+            <p>Having fun with the Go Source Code</p>
+            <p>作者 <strong>Jesús Espino</strong></p>
+            <div class="footer-links">
+                <a href="https://github.com/jespino" target="_blank"><i class="fab fa-github"></i> GitHub</a>
+                <a href="https://x.com/jespinog" target="_blank"><i class="fab fa-x-twitter"></i> @jespinog</a>
+                <a href="https://linkedin.com/in/jesus-espino" target="_blank"><i class="fab fa-linkedin"></i> LinkedIn</a>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

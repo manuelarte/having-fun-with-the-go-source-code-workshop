@@ -9,16 +9,21 @@ This is an educational workshop repository for learning Go compiler internals an
 ## Repository Architecture
 
 ### Workshop Structure
-- **Root**: Contains main README.md with workshop overview and prerequisites
-- **exercises/**: Individual exercise markdown files (00-10) with hands-on instructions
+- **Root**: Contains main README.md (English) and README.zh.md (Chinese) with workshop overview
+- **exercises/**: Individual exercise markdown files (00-11)
+  - `*.md` — English
+  - `*.es.md` — Spanish
+  - `*.zh.md` — Chinese
+- **website/**: Generated static site (`/`, `/es/`, `/zh/`)
+- **website-generator/**: Go program that builds the multi-language website
 - **go/**: Go 1.26.1 source code (cloned during setup, ignored by git)
 - **doing-it/**: Participant workspace directory (ignored by git)
 
 ### Exercise Flow
 1. **Exercise 0**: Environment setup, Go source cloning, and repository exploration
 2. **Exercise 1**: Building Go from source using bootstrap process
-3. **Exercise 2**: First compiler modification - adding "gogogo" keyword as alternative to "go"
-4. **Exercises 3-10**: Placeholder files for future advanced topics
+3. **Exercise 2**: Scanner modification — adding "=>" as alternative syntax for `go`
+4. **Exercises 3-11**: Parser, inlining, gofmt/AST, SSA, runtime, select, stack traces, work stealing
 
 ### Key Workshop Requirements
 - **Go Version**: Workshop uses Go 1.26.1 specifically (checked out via `git checkout go1.26.1`)
@@ -70,10 +75,11 @@ cd go/src
 ## Important File Locations
 
 ### Workshop Content
-- `README.md`: Main workshop overview with prerequisites and structure
-- `exercises/00-introduction-setup.md`: Setup instructions and Go source exploration  
-- `exercises/01-compile-go-unchanged.md`: Bootstrap build process
-- `exercises/02-scanner-go-go-go.md`: Scanner modification tutorial
+- `README.md` / `README.zh.md`: Workshop overview (English / Chinese)
+- `exercises/00-introduction-setup.md` (+ `.es.md` / `.zh.md`): Setup instructions
+- `exercises/01-compile-go-unchanged.md` (+ translations): Bootstrap build process
+- `exercises/02-scanner-arrow-operator.md` (+ translations): Scanner modification (`=>` operator)
+- Other exercises 03–11 follow the same `*.md` / `*.es.md` / `*.zh.md` pattern
 
 ### Go Source Code (go/ directory)
 - `go/src/cmd/compile/`: Go compiler source
@@ -116,5 +122,8 @@ When creating new exercises or modifying existing ones:
 - Provide concrete code examples and expected outputs
 - Add troubleshooting sections for common issues
 - Ensure exercises build logically on previous ones
+- Keep English (`.md`), Spanish (`.es.md`), and Chinese (`.zh.md`) in sync when content changes
+- Chinese translations: natural tech Chinese; keep proper technical nouns in English (Go, goroutine, scanner, lexer, parser, SSA, gofmt, AST, runtime, bootstrap, select, etc.)
+- After exercise markdown changes, regenerate the site with `make website`
 
 When updating workshop content, remember that participants will have varying levels of compiler knowledge, so explanations should be thorough but not overwhelming.

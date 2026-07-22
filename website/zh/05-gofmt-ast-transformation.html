@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>练习 5: 改造 gofmt —— 缩进与 AST 变换 - Go Source Code Workshop</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            hljs.highlightAll();
+
+            
+            document.querySelectorAll('pre').forEach(function(pre) {
+                const button = document.createElement('button');
+                button.className = 'copy-button';
+                button.innerHTML = '<i class="far fa-copy"></i>';
+                button.title = 'Copy to clipboard';
+
+                button.addEventListener('click', function() {
+                    const code = pre.querySelector('code');
+                    const text = code.textContent;
+
+                    navigator.clipboard.writeText(text).then(function() {
+                        button.innerHTML = '<i class="fas fa-check"></i>';
+                        button.classList.add('copied');
+                        setTimeout(function() {
+                            button.innerHTML = '<i class="far fa-copy"></i>';
+                            button.classList.remove('copied');
+                        }, 2000);
+                    }).catch(function(err) {
+                        console.error('Failed to copy:', err);
+                    });
+                });
+
+                pre.appendChild(button);
+            });
+        });
+    </script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <a href="index.html" class="nav-home">Having fun with the Go Source Code</a>
+            <div class="nav-links">
+                <a href="index.html">首页</a>
+                <label class="lang-switch">
+                    <i class="fas fa-globe" aria-hidden="true"></i>
+                    <select onchange="if (this.value) location.href = this.value" aria-label="Language">
+                        <option value="../05-gofmt-ast-transformation.html">English</option><option value="../es/05-gofmt-ast-transformation.html">Español</option><option value="" selected>中文</option>
+                    </select>
+                </label>
+                <a href="https://github.com/jespino/having-fun-with-the-go-source-code-workshop" target="_blank"><i class="fab fa-github"></i> Repository</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <article class="exercise-content">
+            <h1>练习 5: 改造 gofmt — 缩进与 AST 变换</h1>
+
+<blockquote>
+<p>📖 <strong>想深入了解？</strong> 阅读 Internals for Interns 上的 <a href="https://internals-for-interns.com/posts/the-go-parser/">The Parser</a>，深入理解 Go 如何构建并使用 Abstract Syntax Tree。</p>
+</blockquote>
+
+<p>在本练习中，你将修改 Go 的格式化工具 <code>gofmt</code>：把缩进从 tab 改成 4 个空格，并加入自定义 AST 变换，自动把字符串字面量和注释里的 &ldquo;hello&rdquo; 替换成 &ldquo;helo&rdquo;。这会教你 gofmt 如何工作、printer mode 如何控制缩进，以及如何把自定义变换接入 AST 处理流水线。</p>
+
+<h2>学习目标</h2>
+
+<p>完成本练习后，你将能够：</p>
+
+<ul>
+<li>理解 gofmt 如何控制缩进和 printer mode</li>
+<li>学会同时修改 gofmt 与 go/format 包中的格式化行为</li>
+<li>理解 gofmt 如何通过操作 AST 处理 Go 源码</li>
+<li>知道如何修改 AST 中的字符串字面量和注释</li>
+<li>探索 Go 的 AST（Abstract Syntax Tree）结构</li>
+<li>实现自定义的源码变换</li>
+</ul>
+
+<h2>简介：什么是 AST？</h2>
+
+<p><strong>Abstract Syntax Tree（AST）</strong> 是源码的树形表示：每个节点对应一种语言构造——函数、声明、表达式、语句等。树结构刻画了层次关系：函数节点包含语句节点，语句节点又包含表达式节点，以此类推。</p>
+
+<p>Parser（练习 2–3 中已涉及）从 token 流构建这棵树。但 AST 不只被编译器使用——<code>gofmt</code>、<code>goimports</code>、<code>go vet</code> 等工具也会把代码解析成 AST，进行操作后再打印回去。</p>
+
+<p>Go 通过 <code>go/ast</code> 包（位于 <code>src/go/</code>）对外暴露 AST，它与编译器内部的 AST 是分开的。这个公共包提供了诸如 <code>*ast.File</code>（整个源文件）、<code>*ast.FuncDecl</code>（函数声明）、<code>*ast.BasicLit</code>（字符串或数字等字面量）、<code>*ast.Comment</code> 等类型。<code>ast.Inspect()</code> 可以遍历整棵树、访问每一个节点——我们正是要用它来查找并修改字符串字面量和注释。</p>
+
+<h2>背景：gofmt 如何工作</h2>
+
+<p>gofmt 大致经过这些阶段：</p>
+
+<ol>
+<li><strong>Parse</strong> → 把源码转成 AST（Abstract Syntax Tree）</li>
+<li><strong>Transform</strong> → 对 AST 应用格式化规则</li>
+<li><strong>Print</strong> → 把修改后的 AST 按指定缩进再打印成格式化源码</li>
+</ol>
+
+<p>缩进行为由两个关键常量控制：</p>
+
+<ul>
+<li><strong><code>tabWidth</code></strong> → 缩进宽度（默认：8）</li>
+<li><strong><code>printerMode</code></strong> → 控制间距行为的标志：
+
+<ul>
+<li><code>printer.UseSpaces</code> → 用空格做 padding</li>
+<li><code>printer.TabIndent</code> → 用 tab 做缩进</li>
+<li><code>printerNormalizeNumbers</code> → 规范化数字字面量</li>
+</ul></li>
+</ul>
+
+<h3>AST 结构</h3>
+
+<p>Go 把源码表示成节点树；本练习会用到这两个节点：</p>
+
+<ul>
+<li><strong><code>*ast.BasicLit</code></strong> → 字符串字面量、数字等</li>
+<li><strong><code>*ast.Comment</code></strong> → 源码中的注释</li>
+</ul>
+
+<h2>第 1 步：定位到 gofmt 源码</h2>
+
+<pre><code class="language-bash">cd go/src/cmd/gofmt
+ls -la
+</code></pre>
+
+<p>关键文件：</p>
+
+<ul>
+<li><strong><code>gofmt.go</code></strong> → 主程序逻辑与文件处理</li>
+<li><strong><code>simplify.go</code></strong> → AST 简化变换</li>
+</ul>
+
+<h2>第 2 步：把缩进改成 4 个空格</h2>
+
+<p>在加入自定义变换之前，先让 gofmt 用 4 个空格而不是 tab 做缩进。</p>
+
+<h3>修改 gofmt.go</h3>
+
+<p><strong>编辑 <code>go/src/cmd/gofmt/gofmt.go</code>：</strong></p>
+
+<p>在大约第 50 行找到这些常量（附近有注释 &ldquo;Keep these in sync with go/format/format.go&rdquo;）：</p>
+
+<pre><code class="language-go">const (
+	tabWidth    = 8
+	printerMode = printer.UseSpaces | printer.TabIndent | printerNormalizeNumbers
+</code></pre>
+
+<p>改成：</p>
+
+<pre><code class="language-go">const (
+	tabWidth    = 4
+	printerMode = printer.UseSpaces | printerNormalizeNumbers
+</code></pre>
+
+<p><strong>改动说明：</strong></p>
+
+<ul>
+<li><strong><code>tabWidth</code></strong>：从 <code>8</code> 改为 <code>4</code>（每一级缩进 4 个空格）</li>
+<li><strong><code>printerMode</code></strong>：去掉 <code>printer.TabIndent</code> 标志（不再用 tab，只用空格）</li>
+</ul>
+
+<h3>修改 go/format 包</h3>
+
+<p><code>go/format</code> 包也需要同步修改，以保持行为一致。</p>
+
+<p><strong>编辑 <code>go/src/go/format/format.go</code>：</strong></p>
+
+<p>在大约第 29 行找到同样的常量（注释相同）：</p>
+
+<pre><code class="language-go">const (
+	tabWidth    = 8
+	printerMode = printer.UseSpaces | printer.TabIndent | printerNormalizeNumbers
+</code></pre>
+
+<p>改成：</p>
+
+<pre><code class="language-go">const (
+	tabWidth    = 4
+	printerMode = printer.UseSpaces | printerNormalizeNumbers
+</code></pre>
+
+<h3>理解这些改动</h3>
+
+<ul>
+<li><strong><code>tabWidth = 4</code></strong>：每一级缩进使用 4 个空格</li>
+<li><strong>去掉 <code>TabIndent</code></strong>：没有这个标志时，printer 只用空格（不输出 tab 字符）</li>
+<li><strong><code>UseSpaces</code></strong>：确保 padding 和对齐使用空格</li>
+<li><strong>两个文件必须一致</strong>：gofmt 与 go/format 要用同一套设置，行为才一致</li>
+</ul>
+
+<h2>第 3 步：重新构建并测试缩进</h2>
+
+<pre><code class="language-bash">cd ../../../  # back to go/src
+./make.bash
+</code></pre>
+
+<p>创建测试文件 <code>indent_test.go</code>：</p>
+
+<pre><code class="language-go">package main
+
+import &quot;fmt&quot;
+
+func main() {
+	if true {
+		for i := 0; i &lt; 10; i++ {
+			fmt.Println(i)
+		}
+	}
+}
+</code></pre>
+
+<p>测试新的缩进：</p>
+
+<pre><code class="language-bash">cd ..  # to go/ directory
+./bin/gofmt indent_test.go
+</code></pre>
+
+<p>预期输出（注意每一级是 4 个空格）：</p>
+
+<pre><code class="language-go">package main
+
+import &quot;fmt&quot;
+
+func main() {
+    if true {
+        for i := 0; i &lt; 10; i++ {
+            fmt.Println(i)
+        }
+    }
+}
+</code></pre>
+
+<p>现在每一级缩进使用 4 个空格，而不再是 tab。</p>
+
+<h2>第 4 步：加入 Hello→Helo 变换</h2>
+
+<p><strong>编辑 <code>gofmt.go</code>：</strong></p>
+
+<p>在大约第 76 行（<code>usage()</code> 函数之后）加入这个变换函数：</p>
+
+<pre><code class="language-go">// transformHelloToHelo walks the AST and replaces &quot;hello&quot; with &quot;helo&quot;
+// in string literals and comments.
+func transformHelloToHelo(file *ast.File) {
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.BasicLit:
+			// Handle string literals
+			if node.Kind == token.STRING {
+				if strings.Contains(node.Value, &quot;hello&quot;) {
+					node.Value = strings.ReplaceAll(node.Value, &quot;hello&quot;, &quot;helo&quot;)
+				}
+			}
+		case *ast.Comment:
+			// Handle comments
+			if strings.Contains(node.Text, &quot;hello&quot;) {
+				node.Text = strings.ReplaceAll(node.Text, &quot;hello&quot;, &quot;helo&quot;)
+			}
+		}
+		return true // continue traversing
+	})
+}
+</code></pre>
+
+<h3>理解这段代码</h3>
+
+<ul>
+<li><strong><code>ast.Inspect()</code></strong> — 遍历 AST 中的所有节点</li>
+<li><strong><code>*ast.BasicLit</code></strong> — 匹配字面量（含字符串）</li>
+<li><strong><code>node.Kind == token.STRING</code></strong> — 确认是字符串（而不是数字）</li>
+<li><strong><code>*ast.Comment</code></strong> — 匹配注释</li>
+<li><strong><code>strings.ReplaceAll()</code></strong> — 执行替换</li>
+</ul>
+
+<h2>第 5 步：接入变换</h2>
+
+<p><strong>仍然在 <code>gofmt.go</code> 中：</strong></p>
+
+<p>找到大约第 238 行的 <code>processFile</code> 函数。再找到大约第 263 行附近的 <code>if *simplifyAST</code> 代码块：</p>
+
+<pre><code class="language-go">	if *simplifyAST {
+		simplify(file)
+	}
+</code></pre>
+
+<p>紧接其后加入我们的变换：</p>
+
+<pre><code class="language-go">	if *simplifyAST {
+		simplify(file)
+	}
+
+	// Apply our custom hello→helo transformation
+	transformHelloToHelo(file)
+</code></pre>
+
+<h2>第 6 步：重新构建 gofmt</h2>
+
+<pre><code class="language-bash">cd ../../../  # back to go/src
+./make.bash
+</code></pre>
+
+<h2>第 7 步：一起测试两项修改</h2>
+
+<p>创建 <code>hello_test.go</code> 文件：</p>
+
+<pre><code class="language-go">package main
+
+import &quot;fmt&quot;
+
+func main() {
+    // Say hello to everyone
+    message := &quot;hello world&quot;
+    greeting := &quot;Say hello!&quot;
+
+    /* This is a hello comment block */
+    fmt.Println(message)
+    fmt.Println(greeting)
+
+    // Another hello comment
+    fmt.Printf(&quot;hello %s\n&quot;, &quot;Go&quot;)
+}
+</code></pre>
+
+<pre><code class="language-bash">../go/bin/gofmt hello_test.go
+</code></pre>
+
+<p>预期输出（注意同时有 4 空格缩进 <strong>以及</strong> hello→helo 变换）：</p>
+
+<pre><code class="language-go">package main
+
+import &quot;fmt&quot;
+
+func main() {
+    // Say helo to everyone
+    message := &quot;helo world&quot;
+    greeting := &quot;Say helo!&quot;
+
+    /* This is a helo comment block */
+    fmt.Println(message)
+    fmt.Println(greeting)
+
+    // Another helo comment
+    fmt.Printf(&quot;helo %s\n&quot;, &quot;Go&quot;)
+}
+</code></pre>
+
+<p>两项改动都生效了：</p>
+
+<ol>
+<li>所有 &ldquo;hello&rdquo; 都被替换成 &ldquo;helo&rdquo;</li>
+<li>缩进使用 4 个空格而不是 tab</li>
+</ol>
+
+<h2>第 8 步：测试就地格式化</h2>
+
+<pre><code class="language-bash"># Format and overwrite the file
+../go/bin/gofmt -w hello_test.go
+
+# Verify the changes
+cat hello_test.go
+</code></pre>
+
+<p>文件已被永久改写：内容里是 &ldquo;helo&rdquo; 而不是 &ldquo;hello&rdquo;，缩进也是 4 个空格！</p>
+
+<h2>理解我们做了什么</h2>
+
+<ol>
+<li><strong>修改 Printer 设置</strong>：调整 tabWidth 和 printerMode，改用 4 个空格</li>
+<li><strong>同步两个包</strong>：同时更新 gofmt 与 go/format，保证一致</li>
+<li><strong>加入 AST Visitor</strong>：编写函数遍历并修改 AST 节点</li>
+<li><strong>模式匹配</strong>：识别字符串字面量和注释</li>
+<li><strong>文本替换</strong>：修改节点值，把 &ldquo;hello&rdquo; 换成 &ldquo;helo&rdquo;</li>
+<li><strong>接入流水线</strong>：在 gofmt 处理过程中调用变换</li>
+<li><strong>测试验证</strong>：确认缩进与变换两项改动都生效</li>
+</ol>
+
+<h2>你学到了什么</h2>
+
+<ul>
+<li><strong>Printer 配置</strong>：gofmt 如何通过 tabWidth 和 printerMode 控制缩进</li>
+<li><strong>包之间的一致性</strong>：为何 gofmt 与 go/format 必须保持同步</li>
+<li><strong>AST 操作</strong>：如何遍历并修改 Go 的 Abstract Syntax Tree</li>
+<li><strong>改造工具</strong>：如何在现有 Go 工具上叠加多项改动</li>
+<li><strong>代码变换</strong>：实现系统性的源码修改</li>
+<li><strong>构建流程</strong>：重新构建 Go toolchain 组件</li>
+<li><strong>测试</strong>：验证自定义工具行为</li>
+</ul>
+
+<h2>扩展思路</h2>
+
+<p>可以试试这些额外改动：</p>
+
+<ol>
+<li>加一个命令行 flag 来启用/关闭变换</li>
+<li>支持多组词替换（hello→helo、world→universe）</li>
+<li>增加大小写敏感选项</li>
+<li>只替换完整单词（不替换词内部的子串）</li>
+<li>让 tabWidth 可通过命令行 flag 配置</li>
+<li>增加在 tab 与空格之间切换的选项</li>
+</ol>
+
+<p>示例：增加 flag</p>
+
+<pre><code class="language-go">var replaceHello = flag.Bool(&quot;helo&quot;, false, &quot;replace hello with helo&quot;)
+
+// In processFile():
+if *replaceHello {
+    transformHelloToHelo(file)
+}
+</code></pre>
+
+<h2>清理</h2>
+
+<p>恢复原始 gofmt：</p>
+
+<pre><code class="language-bash">cd go/src/cmd/gofmt
+git checkout gofmt.go
+cd ../go/format
+git checkout format.go
+cd ../../../src
+./make.bash
+</code></pre>
+
+<h2>总结</h2>
+
+<p>你已经用两种强有力的方式成功改造了 gofmt！</p>
+
+<pre><code>Indentation:   tabs (8 width) → 4 spaces
+Transformation: &quot;hello world&quot;  → &quot;helo world&quot;
+                // Say hello    → // Say helo
+
+Changes:  tabWidth=4 + remove TabIndent flag
+         + ast.Inspect() → pattern match → replace text
+</code></pre>
+
+<p>你现在理解了 <code>gofmt</code>、<code>goimports</code>、<code>go fix</code> 这类工具在 printer 与 AST 两个层面上是如何工作的。</p>
+
+<hr />
+
+<p><em>继续 <a href="06-ssa-power-of-two-detector.html">练习 6</a>，或返回 <a href="index.html">工作坊主页</a></em></p>
+
+        </article>
+
+        <nav class="exercise-nav">
+            
+            <a href="04-compiler-inlining-parameters.html" class="nav-button">← 上一篇</a>
+            
+            
+            <a href="06-ssa-power-of-two-detector.html" class="nav-button">下一篇: 练习 6 →</a>
+            
+        </nav>
+    </div>
+
+    <footer>
+        <div class="container">
+            <p>Having fun with the Go Source Code</p>
+            <p>作者 <strong>Jesús Espino</strong></p>
+            <div class="footer-links">
+                <a href="https://github.com/jespino" target="_blank"><i class="fab fa-github"></i> GitHub</a>
+                <a href="https://x.com/jespinog" target="_blank"><i class="fab fa-x-twitter"></i> @jespinog</a>
+                <a href="https://linkedin.com/in/jesus-espino" target="_blank"><i class="fab fa-linkedin"></i> LinkedIn</a>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

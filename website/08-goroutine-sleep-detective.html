@@ -47,7 +47,12 @@
             <a href="index.html" class="nav-home">Having fun with the Go Source Code</a>
             <div class="nav-links">
                 <a href="index.html">Home</a>
-                <a href="es/08-goroutine-sleep-detective.html" class="lang-switch"><i class="fas fa-globe"></i> Español</a>
+                <label class="lang-switch">
+                    <i class="fas fa-globe" aria-hidden="true"></i>
+                    <select onchange="if (this.value) location.href = this.value" aria-label="Language">
+                        <option value="" selected>English</option><option value="es/08-goroutine-sleep-detective.html">Español</option><option value="zh/08-goroutine-sleep-detective.html">中文</option>
+                    </select>
+                </label>
                 <a href="https://github.com/jespino/having-fun-with-the-go-source-code-workshop" target="_blank"><i class="fab fa-github"></i> Repository</a>
             </div>
         </div>

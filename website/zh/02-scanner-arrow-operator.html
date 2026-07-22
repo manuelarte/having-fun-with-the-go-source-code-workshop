@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>练习 2: 为 Goroutine 增加 &#34;=&gt;&#34; 箭头运算符 - Go Source Code Workshop</title>
+    <link rel="stylesheet" href="../style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/go.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            hljs.highlightAll();
+
+            
+            document.querySelectorAll('pre').forEach(function(pre) {
+                const button = document.createElement('button');
+                button.className = 'copy-button';
+                button.innerHTML = '<i class="far fa-copy"></i>';
+                button.title = 'Copy to clipboard';
+
+                button.addEventListener('click', function() {
+                    const code = pre.querySelector('code');
+                    const text = code.textContent;
+
+                    navigator.clipboard.writeText(text).then(function() {
+                        button.innerHTML = '<i class="fas fa-check"></i>';
+                        button.classList.add('copied');
+                        setTimeout(function() {
+                            button.innerHTML = '<i class="far fa-copy"></i>';
+                            button.classList.remove('copied');
+                        }, 2000);
+                    }).catch(function(err) {
+                        console.error('Failed to copy:', err);
+                    });
+                });
+
+                pre.appendChild(button);
+            });
+        });
+    </script>
+</head>
+<body>
+    <nav class="navbar">
+        <div class="container">
+            <a href="index.html" class="nav-home">Having fun with the Go Source Code</a>
+            <div class="nav-links">
+                <a href="index.html">首页</a>
+                <label class="lang-switch">
+                    <i class="fas fa-globe" aria-hidden="true"></i>
+                    <select onchange="if (this.value) location.href = this.value" aria-label="Language">
+                        <option value="../02-scanner-arrow-operator.html">English</option><option value="../es/02-scanner-arrow-operator.html">Español</option><option value="" selected>中文</option>
+                    </select>
+                </label>
+                <a href="https://github.com/jespino/having-fun-with-the-go-source-code-workshop" target="_blank"><i class="fab fa-github"></i> Repository</a>
+            </div>
+        </div>
+    </nav>
+
+    <div class="container">
+        <article class="exercise-content">
+            <h1>练习 2: 为 Goroutine 添加 &ldquo;=&gt;&rdquo; 箭头运算符</h1>
+
+<blockquote>
+<p>📖 <strong>想深入了解？</strong> 阅读 Internals for Interns 上的 <a href="https://internals-for-interns.com/posts/the-go-lexer/">The Scanner</a>，深入理解 Go 的 lexer/scanner 如何工作。</p>
+</blockquote>
+
+<p>在本练习中，你会为 Go 新增一个 &ldquo;=&gt;&rdquo; 箭头运算符，作为启动 goroutine 的另一种写法。借此学习如何改 Go 的 scanner，让它识别新运算符，并映射到已有功能。</p>
+
+<h2>学习目标</h2>
+
+<p>完成本练习后，你将：</p>
+
+<ul>
+<li>理解 Go 的 scanner 如何把运算符 token 化</li>
+<li>知道如何给 Go 加新的运算符语法</li>
+<li>修改 scanner 的词法分析逻辑</li>
+<li>用可运行的代码验证 scanner 改动</li>
+<li>成功扩展 Go 的运算符“词汇表”</li>
+</ul>
+
+<h2>简介: 什么是 Scanner？</h2>
+
+<p>Scanner（也叫 lexer）是编译器的第一阶段。它逐字符读取源码，把字符组合成 <strong>token</strong>——语言中最小的有意义单元，例如 keyword（<code>func</code>、<code>go</code>、<code>return</code>）、运算符（<code>+</code>、<code>==</code>、<code>=&gt;</code>）、标识符（<code>myVariable</code>）和字面量（<code>&quot;hello&quot;</code>、<code>42</code>）。</p>
+
+<p>例如，scanner 看到 <code>go sayHello()</code> 时，会产出这些 token：<code>_Go</code>、<code>_Name(&quot;sayHello&quot;)</code>、<code>_Lparen</code>、<code>_Rparen</code>。</p>
+
+<p>Scanner 靠一个大的 <code>switch</code> 处理当前字符。当看到 <code>=</code> 时，会再看下一个字符：若还是 <code>=</code>，就产出 <code>==</code>（相等比较）token；否则产出 <code>=</code>（赋值）。这种前瞻（lookahead）机制，正是我们接下来要扩展来识别 <code>=&gt;</code> 的地方。</p>
+
+<p>Scanner 位于 <code>go/src/cmd/compile/internal/syntax/scanner.go</code>。</p>
+
+<h2>背景: 这次 Scanner 改造在做什么</h2>
+
+<p>本练习演示的是<strong>在 scanner 层</strong>给 Go 加新运算符语法。我们会改 scanner 逻辑，识别新的运算符序列 &ldquo;=&gt;&ldquo;，并映射到已有 token。具体会做到：</p>
+
+<ul>
+<li><strong>增强 Scanner</strong>：增加对 &ldquo;=&gt;&rdquo; 运算符序列的识别</li>
+<li><strong>Token 映射</strong>：把 &ldquo;=&gt;&rdquo; 映射到已有的 <code>_Go</code> token（与 &ldquo;go&rdquo; keyword 相同）</li>
+<li><strong>替代语法</strong>：让 <code>=&gt; myFunction()</code> 等价于 <code>go myFunction()</code></li>
+<li><strong>影响最小</strong>：不需要改 parser 或编译器更深层——只动 scanner 逻辑</li>
+</ul>
+
+<p>这样就能用很轻量的改动，做出更优雅的替代写法，而不必动编译器深处！</p>
+
+<h2>第 1 步: 进入 Scanner 目录</h2>
+
+<pre><code class="language-bash">cd go/src/cmd/compile/internal/syntax
+</code></pre>
+
+<h3>理解 Scanner 结构</h3>
+
+<p>看看 <code>scanner.go</code> 里如何处理 &ldquo;=&rdquo; 运算符。定位到第 325 行附近：</p>
+
+<pre><code class="language-go">// go/src/cmd/compile/internal/syntax/scanner.go:325
+case '=':
+    s.nextch()
+    if s.ch == '=' {
+        s.nextch()
+        s.op, s.prec = Eql, precCmp
+        s.tok = _Operator
+        break
+    }
+    s.tok = _Assign
+</code></pre>
+
+<p>Scanner 先用 <code>s.nextch()</code> 消费掉 &ldquo;=&ldquo;，再检查下一个字符是不是也是 &ldquo;=&ldquo;（对应 <code>==</code> 比较运算符）。如果不是，就回退为 &ldquo;=&ldquo;（赋值）。</p>
+
+<h2>第 2 步: 加上箭头运算符逻辑</h2>
+
+<p>我们需要增加识别 &ldquo;=&gt;&rdquo; 的逻辑，并把它当成 <code>_Go</code> token。</p>
+
+<p><strong>编辑 <code>scanner.go</code>：</strong></p>
+
+<p>找到大约第 325 行的 &ldquo;=&rdquo; 分支，改成也检查 &ldquo;&gt;&ldquo;：</p>
+
+<pre><code class="language-go">// go/src/cmd/compile/internal/syntax/scanner.go:325
+case '=':
+    s.nextch()
+    if s.ch == '=' {
+        s.nextch()
+        s.op, s.prec = Eql, precCmp
+        s.tok = _Operator
+        break
+    }
+    if s.ch == '&gt;' {
+        s.nextch()
+        s.lit = &quot;=&gt;&quot;
+        s.tok = _Go
+        break
+    }
+    s.tok = _Assign
+</code></pre>
+
+<h3>理解代码改动</h3>
+
+<ul>
+<li><strong><code>if s.ch == '&gt;'</code></strong>：检查 &ldquo;=&rdquo; 之后的下一个字符是不是 &ldquo;&gt;&ldquo;（注意 <code>s.nextch()</code> 已经消费掉了 &ldquo;=&ldquo;）</li>
+<li><strong><code>s.nextch()</code></strong>：从 lexer 中消费掉 &ldquo;&gt;&rdquo; 字符</li>
+<li><strong><code>s.lit = &quot;=&gt;&quot;</code></strong>：设置字面量，便于调试和错误信息</li>
+<li><strong><code>s.tok = _Go</code></strong>：赋成与 &ldquo;go&rdquo; keyword 相同的 token</li>
+<li><strong><code>break</code></strong>：跳出 case，避免落到 <code>_Assign</code></li>
+</ul>
+
+<h2>第 3 步: 重新构建编译器</h2>
+
+<p>带着改动重建 Go toolchain：</p>
+
+<pre><code class="language-bash">cd ../../../  # 回到 go/src
+./make.bash
+</code></pre>
+
+<p>若有编译错误，检查并修正你的改动。</p>
+
+<h2>第 4 步: 测试新的箭头运算符</h2>
+
+<p>写一个测试程序，验证 &ldquo;=&gt;&rdquo; 运算符可用：</p>
+
+<pre><code class="language-bash">mkdir -p /tmp/arrow-test
+cd /tmp/arrow-test
+</code></pre>
+
+<p>创建 test.go：</p>
+
+<pre><code class="language-go">package main
+
+import (
+    &quot;fmt&quot;
+    &quot;time&quot;
+)
+
+func sayHello(name string) {
+    fmt.Printf(&quot;Hello from %s!\n&quot;, name)
+}
+
+func main() {
+    fmt.Println(&quot;Testing =&gt; arrow operator...&quot;)
+
+    // 测试普通 go keyword
+    go sayHello(&quot;regular go&quot;)
+
+    // 测试我们新加的 =&gt; 运算符
+    =&gt; sayHello(&quot;arrow operator&quot;)
+
+    // 稍等片刻，便于看到输出
+    time.Sleep(100 * time.Millisecond)
+    fmt.Println(&quot;All done!&quot;)
+}
+</code></pre>
+
+<p>用你自定义的 Go 运行测试程序：</p>
+
+<pre><code class="language-bash">/path/to/workshop/go/bin/go run test.go
+</code></pre>
+
+<p>你应该会看到类似输出：</p>
+
+<pre><code>Testing =&gt; arrow operator...
+Hello from regular go!
+Hello from arrow operator!
+All done!
+</code></pre>
+
+<h2>第 5 步: 混合使用 Go 运算符</h2>
+
+<p>再测混合场景：同时用传统的 &ldquo;go&rdquo; keyword 和新的 &ldquo;=&gt;&rdquo; 箭头运算符。</p>
+
+<p>创建 mixed-test.go：</p>
+
+<pre><code class="language-go">package main
+
+import (
+    &quot;fmt&quot;
+    &quot;sync&quot;
+    &quot;time&quot;
+)
+
+func worker(id int, wg *sync.WaitGroup) {
+    defer wg.Done()
+    fmt.Printf(&quot;Worker %d starting\n&quot;, id)
+    time.Sleep(50 * time.Millisecond)
+    fmt.Printf(&quot;Worker %d done\n&quot;, id)
+}
+
+func main() {
+    var wg sync.WaitGroup
+
+    fmt.Println(&quot;Starting workers with mixed syntax...&quot;)
+
+    // 混合使用普通 go 和 =&gt; 运算符
+    for i := 1; i &lt;= 4; i++ {
+        wg.Add(1)
+        if i%2 == 0 {
+            go worker(i, &amp;wg)  // 普通 go
+        } else {
+            =&gt; worker(i, &amp;wg)  // 箭头运算符
+        }
+    }
+
+    wg.Wait()
+    fmt.Println(&quot;All workers completed!&quot;)
+}
+</code></pre>
+
+<p>运行混合测试：</p>
+
+<pre><code class="language-bash">/path/to/workshop/go/bin/go run mixed-test.go
+</code></pre>
+
+<h2>第 6 步: 运行 Scanner 测试</h2>
+
+<p>确认我们没有把 scanner 弄坏：</p>
+
+<pre><code class="language-bash">cd /path/to/workshop/go/src
+../bin/go test cmd/compile/internal/syntax -short
+</code></pre>
+
+<h2>我们做了什么</h2>
+
+<ol>
+<li><strong>改了 Scanner 逻辑</strong>：在已有的 &ldquo;=&rdquo; 分支里增加对 &ldquo;=&gt;&rdquo; 的识别</li>
+<li><strong>复用已有 Token</strong>：把 &ldquo;=&gt;&rdquo; 映射到 <code>_Go</code>，而不是新建 token</li>
+<li><strong>保留原有功能</strong>：&rdquo;=&rdquo; 和 &ldquo;==&rdquo; 仍然正常工作</li>
+<li><strong>改动面很小</strong>：不需要改 parser 或 IR</li>
+</ol>
+
+<h2>你学到了什么</h2>
+
+<ul>
+<li><strong>Scanner 逻辑</strong>：Go 如何对运算符序列做 token 化</li>
+<li><strong>运算符识别</strong>：通过改 scanner 添加新运算符</li>
+<li><strong>Token 复用</strong>：把新语法映射到已有 token</li>
+<li><strong>测试策略</strong>：用真实代码验证 scanner 改动</li>
+<li><strong>构建流程</strong>：带着 scanner 改动重建 Go</li>
+</ul>
+
+<h2>扩展想法</h2>
+
+<p>可以再试试这些改动：</p>
+
+<ol>
+<li>把 &ldquo;:&gt;&rdquo; 也做成 &ldquo;go&rdquo; 的另一种写法</li>
+<li>用 &ldquo;~&gt;&rdquo; 表示异步操作</li>
+<li>加一个 &ldquo;&gt;&gt;&gt;&rdquo; 三箭头运算符</li>
+<li>让箭头运算符在更多上下文中生效</li>
+</ol>
+
+<h2>下一步</h2>
+
+<p>你已经成功给 Go 的 scanner 加了一个新运算符，也明白了如何通过改 scanner 为已有功能提供替代语法。同一套手法还可以用来做其他运算符快捷写法和语法糖。</p>
+
+<p>在练习 3 中，我们会换一条路，探索 <strong>parser 改造</strong>——学习如何改 parser，让它处理连续的多个 token。</p>
+
+<h2>清理</h2>
+
+<p>恢复原始 Go 源码：</p>
+
+<pre><code class="language-bash">cd /path/to/workshop/go/src/cmd/compile/internal/syntax
+git checkout scanner.go
+cd ../../../
+./make.bash  # 用原始代码重新构建
+</code></pre>
+
+<h2>总结</h2>
+
+<p>&rdquo;=&gt;&rdquo; 箭头运算符现在可以作为 &ldquo;go&rdquo; 的替代，用来启动 goroutine：</p>
+
+<pre><code class="language-go">// 下面两种写法现在等价：
+go myFunction()
+=&gt; myFunction()
+
+// 两者都以同样的方式创建 goroutine！
+</code></pre>
+
+<p>本练习展示了：在 scanner 层做改动，就能用很少的代码变更加入新语法。</p>
+
+<hr />
+
+<p><em>继续前往 <a href="03-parser-multiple-go.html">练习 3</a>，或返回 <a href="index.html">工作坊主页</a></em></p>
+
+        </article>
+
+        <nav class="exercise-nav">
+            
+            <a href="01-compile-go-unchanged.html" class="nav-button">← 上一篇</a>
+            
+            
+            <a href="03-parser-multiple-go.html" class="nav-button">下一篇: 练习 3 →</a>
+            
+        </nav>
+    </div>
+
+    <footer>
+        <div class="container">
+            <p>Having fun with the Go Source Code</p>
+            <p>作者 <strong>Jesús Espino</strong></p>
+            <div class="footer-links">
+                <a href="https://github.com/jespino" target="_blank"><i class="fab fa-github"></i> GitHub</a>
+                <a href="https://x.com/jespinog" target="_blank"><i class="fab fa-x-twitter"></i> @jespinog</a>
+                <a href="https://linkedin.com/in/jesus-espino" target="_blank"><i class="fab fa-linkedin"></i> LinkedIn</a>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

@@ -71,21 +71,17 @@ func (s *devServer) rebuild() error {
 		}
 
 		homePath := ""
-		altLangURLPrefix := "../"
-		if lang.OutputPrefix == "" {
-			altLangURLPrefix = "es/"
-		}
 
 		exercises := make([]Exercise, 0, len(lang.Metadata))
 		for i, meta := range lang.Metadata {
-			exercise, err := generateExercisePage(s.exercisesDir, langOutputDir, lang, meta, i, cssPath, homePath, altLangURLPrefix)
+			exercise, err := generateExercisePage(s.exercisesDir, langOutputDir, lang, meta, i, cssPath, homePath)
 			if err != nil {
 				return err
 			}
 			exercises = append(exercises, exercise)
 		}
 
-		if err := generateIndexPage(langOutputDir, lang, exercises, cssPath, homePath, altLangURLPrefix); err != nil {
+		if err := generateIndexPage(langOutputDir, lang, exercises, cssPath, homePath); err != nil {
 			return err
 		}
 	}
