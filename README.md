@@ -20,7 +20,7 @@ Welcome to an interactive workshop where you'll learn how to modify and experime
 
 ## Workshop Overview
 
-This workshop consists of 11 exercises that will take you through the process from building Go from source, and making modifications at different places in the compiler, tooling and runtime. You'll gain some insights about the Go internals, from things like the lexer or parser, to runtime behaviors:
+This workshop consists of 12 exercises that will take you through the process from building Go from source, and making modifications at different places in the compiler, tooling and runtime. You'll gain some insights about the Go internals, from things like the lexer or parser, to runtime behaviors:
 
 ### [Exercise 0: Introduction and Setup](./exercises/00-introduction-setup.md)
 
