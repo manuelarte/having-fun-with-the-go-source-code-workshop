@@ -7,7 +7,7 @@ Welcome to an interactive workshop where you'll learn how to modify and experime
 ## Languages / 语言
 
 - English: [README.md](./README.md) · exercises as `*.md`
-- Español: exercises as `*.es.md`
+- Español: [README.es.md](./README.es.md) · exercises as `*.es.md`
 - 中文: [README.zh.md](./README.zh.md) · exercises as `*.zh.md`
 
 ## Prerequisites
